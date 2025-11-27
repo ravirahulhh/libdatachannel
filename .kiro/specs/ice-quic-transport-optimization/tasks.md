@@ -1,0 +1,137 @@
+# Implementation Plan
+
+- [x] 1. Update configuration and data types
+  - [x] 1.1 Simplify IceQuicConfig structure
+    - Change stunServer/stunPort to stunServers vector
+    - Remove unnecessary fields (bindAddress, bindPort, maxMessageSize)
+    - Keep idleTimeoutMs, maxStreams, isServer, certPath, keyPath
+    - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5_
+  - [x] 1.2 Write property test for configuration field preservation
+    - **Property 1: Configuration field preservation**
+    - **Validates: Requirements 2.2, 2.3, 2.4, 2.5**
+  - [x] 1.3 Add IceDescription structure
+    - Create struct with ufrag, pwd, candidates fields
+    - _Requirements: 4.1_
+  - [x] 1.4 Update TransportState enum
+    - Add Gathering state between Disconnected and Connecting
+    - _Requirements: 6.1_
+
+- [x] 2. Refactor ICE layer to use libnice SDP parsing
+  - [x] 2.1 Update addRemoteCandidate to use nice_agent_parse_remote_candidate_sdp
+    - Replace manual SDP parsing with libnice native function
+    - Simplify error handling
+    - _Requirements: 1.1_
+  - [x] 2.2 Update candidate generation to use nice_agent_generate_local_candidate_sdp
+    - Use libnice native SDP generation in onIceNewCandidate callback
+    - _Requirements: 1.2_
+  - [x] 2.3 Write property test for SDP candidate round-trip
+    - **Property 2: SDP candidate round-trip**
+    - **Validates: Requirements 1.1, 1.2**
+  - [x] 2.4 Implement getLocalDescription method
+    - Return IceDescription with ufrag, pwd, and all gathered candidates
+    - Use nice_agent_get_local_credentials for ufrag/pwd
+    - _Requirements: 4.1_
+  - [x] 2.5 Write property test for local description completeness
+    - **Property 3: Local description completeness**
+    - **Validates: Requirements 4.1**
+  - [x] 2.6 Implement setRemoteDescription method
+    - Set remote credentials using nice_agent_set_remote_credentials
+    - Add all candidates using addRemoteCandidate
+    - _Requirements: 4.2_
+  - [x] 2.7 Write property test for remote description acceptance
+    - **Property 4: Remote description acceptance**
+    - **Validates: Requirements 4.2**
+  - [x] 2.8 Write property test for trickle ICE support
+    - **Property 5: Trickle ICE support**
+    - **Validates: Requirements 4.3**
+
+- [x] 3. Checkpoint - Ensure ICE layer tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 4. Simplify ICE initialization
+  - [x] 4.1 Update initIce to use stunServers vector
+    - Configure multiple STUN servers from config.stunServers
+    - Parse "host:port" format from vector entries
+    - _Requirements: 2.1_
+  - [x] 4.2 Ensure single ICE stream with single component
+    - Verify only one stream and one component are created
+    - Remove any multi-stream/component logic
+    - _Requirements: 3.1, 3.3_
+  - [x] 4.3 Update state transitions
+    - Transition to Gathering state in gatherCandidates()
+    - Transition to Connecting when remote candidates received
+    - _Requirements: 6.1_
+  - [x] 4.4 Write property test for state transition validity
+    - **Property 9: State transition validity**
+    - **Validates: Requirements 6.1, 6.3, 6.4, 7.4**
+  - [x] 4.5 Write property test for gathering callback guarantee
+    - **Property 10: Gathering callback guarantee**
+    - **Validates: Requirements 6.2**
+
+- [x] 5. Refactor stream operations
+  - [x] 5.1 Simplify openStream implementation
+    - Remove unnecessary polling logic
+    - Return stream ID directly from lsquic
+    - _Requirements: 5.1_
+  - [x] 5.2 Write property test for stream ID uniqueness
+    - **Property 6: Stream ID uniqueness**
+    - **Validates: Requirements 5.1**
+  - [x] 5.3 Simplify closeStream implementation
+    - Clean up stream closure logic
+    - _Requirements: 5.4_
+  - [x] 5.4 Write property test for stream closure
+    - **Property 8: Stream closure**
+    - **Validates: Requirements 5.4**
+
+- [x] 6. Checkpoint - Ensure stream tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 7. Simplify data transmission
+  - [x] 7.1 Clean up send method
+    - Remove redundant validation
+    - Simplify error handling
+    - _Requirements: 5.2_
+  - [x] 7.2 Write property test for data round-trip integrity
+    - **Property 7: Data round-trip integrity**
+    - **Validates: Requirements 5.2, 5.3**
+
+- [x] 8. Simplify statistics and connection control
+  - [x] 8.1 Clean up statistics methods
+    - Simplify getRtt, getBytesSent, getBytesReceived
+    - Remove getPacketLoss (not essential for P2P)
+    - _Requirements: 7.1, 7.2, 7.3_
+  - [x] 8.2 Write property test for statistics monotonicity
+    - **Property 11: Statistics monotonicity**
+    - **Validates: Requirements 7.2, 7.3**
+  - [x] 8.3 Simplify close method
+    - Clean up connection closure logic
+    - _Requirements: 6.4_
+  - [x] 8.4 Write property test for close callback guarantee
+    - **Property 12: Close callback guarantee**
+    - **Validates: Requirements 6.4**
+
+- [x] 9. Update public header file
+  - [x] 9.1 Update ice_quic_transport.hpp
+    - Add IceDescription structure
+    - Add getLocalDescription/setRemoteDescription methods
+    - Update documentation
+    - _Requirements: 4.1, 4.2_
+  - [x] 9.2 Update ice_quic_config.hpp
+    - Change to stunServers vector
+    - Remove deprecated fields
+    - _Requirements: 2.1_
+
+- [x] 10. Update examples
+  - [x] 10.1 Update echo server example
+    - Use simplified API with getLocalDescription/setRemoteDescription
+    - _Requirements: 8.1_
+  - [x] 10.2 Update echo client example
+    - Use simplified API
+    - _Requirements: 8.2_
+  - [x] 10.3 Update loopback test
+    - Demonstrate SDP-based candidate exchange
+    - _Requirements: 8.3, 8.4_
+
+- [x] 11. Final Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+

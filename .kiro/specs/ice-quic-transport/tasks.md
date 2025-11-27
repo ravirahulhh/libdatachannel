@@ -1,0 +1,196 @@
+# Implementation Plan
+
+- [x] 1. Set up project structure and build system
+  - Create directory structure: `ice_quic_transport/include/`, `ice_quic_transport/src/`, `ice_quic_transport/examples/`, `ice_quic_transport/test/`
+  - Create CMakeLists.txt with libnice and lsquic dependencies
+  - Configure BoringSSL dependency for lsquic
+  - _Requirements: 10.1, 10.5_
+
+- [x] 2. Implement configuration and data types
+  - [x] 2.1 Create IceQuicConfig structure
+    - Define all configuration fields with default values
+    - Implement validation method for config
+    - _Requirements: 1.1, 1.2, 1.3, 1.4_
+  - [x] 2.2 Write property test for configuration field preservation
+    - **Property 1: Configuration field preservation**
+    - **Validates: Requirements 1.1, 1.2**
+  - [x] 2.3 Create TransportState enum and IceQuicCallbacks structure
+    - Define TransportState enum (Disconnected, Connecting, Connected, Failed)
+    - Define callback function types
+    - _Requirements: 7.5_
+  - [x] 2.4 Create IceQuicException class
+    - Define error codes enum
+    - Implement exception with code and message
+    - _Requirements: 2.4, 2.5_
+
+- [x] 3. Implement ICE layer (libnice integration)
+  - [x] 3.1 Implement libnice initialization in IceQuicTransport constructor
+    - Create GMainLoop and NiceAgent
+    - Configure STUN server from config
+    - Set up ICE agent properties
+    - _Requirements: 2.1_
+  - [x] 3.2 Implement ICE candidate gathering
+    - Implement gatherCandidates() method
+    - Set up candidate callback to invoke onLocalCandidate
+    - Set up gathering done callback to invoke onGatheringComplete
+    - _Requirements: 3.1, 3.2, 3.3_
+  - [x] 3.3 Write property test for candidate callback invocation
+    - **Property 3: Candidate callback invocation**
+    - **Validates: Requirements 3.1, 3.2, 3.3**
+  - [x] 3.4 Implement remote candidate handling
+    - Implement addRemoteCandidate() with SDP parsing
+    - Implement setRemoteCredentials() for ICE ufrag/pwd
+    - Implement getLocalCredentials() to return local ufrag/pwd
+    - _Requirements: 3.4, 3.5, 3.6_
+  - [x] 3.5 Write property test for credentials format
+    - **Property 5: Credentials format**
+    - **Validates: Requirements 3.5, 3.6**
+  - [x] 3.6 Implement ICE state change handling
+    - Handle NICE_COMPONENT_STATE_* transitions
+    - Transition to Connected state when ICE succeeds
+    - Transition to Failed state when ICE fails
+    - _Requirements: 4.1, 4.4_
+
+- [x] 4. Checkpoint - Ensure ICE layer tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 5. Implement QUIC layer (lsquic integration)
+  - [x] 5.1 Implement lsquic engine initialization
+    - Initialize lsquic_engine_settings with config values
+    - Create lsquic_engine_api with callbacks
+    - Create engine with lsquic_engine_new()
+    - _Requirements: 2.2_
+  - [x] 5.2 Write property test for role configuration consistency
+    - **Property 2: Role configuration consistency**
+    - **Validates: Requirements 1.3, 2.2**
+  - [x] 5.3 Implement packet routing between ICE and QUIC
+    - Implement ea_packets_out callback to send via nice_agent_send()
+    - Implement ICE recv callback to feed packets to lsquic_engine_packet_in()
+    - _Requirements: 9.1, 9.2, 9.3_
+  - [x] 5.4 Implement QUIC connection establishment
+    - For client: call lsquic_engine_connect() after ICE connected
+    - For server: handle incoming connection in on_new_conn callback
+    - Invoke onConnected callback when QUIC handshake completes
+    - _Requirements: 4.2, 4.3_
+  - [x] 5.5 Implement QUIC event loop
+    - Create timer to call lsquic_engine_process_conns() periodically
+    - Handle lsquic_engine_has_unsent_packets() and send_unsent_packets()
+    - _Requirements: 9.4_
+
+- [x] 6. Implement stream management
+  - [x] 6.1 Implement openStream() method
+    - Call lsquic_conn_make_stream() to create new stream
+    - Track stream in internal map with unique ID
+    - Return stream ID to caller
+    - _Requirements: 5.1_
+  - [x] 6.2 Write property test for stream ID uniqueness
+    - **Property 6: Stream ID uniqueness**
+    - **Validates: Requirements 5.1**
+  - [x] 6.3 Implement closeStream() method
+    - Call lsquic_stream_close() for the stream
+    - Remove stream from internal map
+    - _Requirements: 5.2_
+  - [x] 6.4 Implement stream callbacks
+    - Handle on_new_stream for peer-initiated streams, invoke onStreamOpened
+    - Handle on_close for stream closure, invoke onStreamClosed
+    - _Requirements: 5.3, 5.4_
+  - [x] 6.5 Implement getMaxStreams() method
+    - Return configured max streams value
+    - _Requirements: 5.5_
+
+- [x] 7. Implement data transmission
+  - [x] 7.1 Implement send() method
+    - Validate connection state (return false if not Connected)
+    - Validate data size (return false if exceeds maxMessageSize)
+    - Write data to lsquic stream using lsquic_stream_write()
+    - Update bytesSent counter
+    - _Requirements: 6.1, 6.3, 6.4, 6.5_
+  - [x] 7.2 Write property test for send state validation
+    - **Property 7: Send state validation**
+    - **Validates: Requirements 6.3**
+  - [x] 7.3 Write property test for send size validation
+    - **Property 8: Send size validation**
+    - **Validates: Requirements 6.4**
+  - [x] 7.4 Implement data reception
+    - Handle on_read callback from lsquic
+    - Read data using lsquic_stream_read()
+    - Invoke onData callback with stream ID and data
+    - Update bytesReceived counter
+    - _Requirements: 6.2_
+  - [x] 7.5 Write property test for data round-trip integrity
+    - **Property 9: Data round-trip integrity**
+    - **Validates: Requirements 6.1, 6.2**
+
+- [x] 8. Checkpoint - Ensure data transmission tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 9. Implement statistics and connection control
+  - [x] 9.1 Implement statistics methods
+    - Implement getRtt() using lsquic connection stats
+    - Implement getBytesSent() returning atomic counter
+    - Implement getBytesReceived() returning atomic counter
+    - Implement getPacketLoss() using lsquic stats
+    - _Requirements: 7.1, 7.2, 7.3, 7.4_
+  - [x] 9.2 Write property test for statistics monotonicity
+    - **Property 10: Statistics monotonicity**
+    - **Validates: Requirements 7.2, 7.3**
+  - [x] 9.3 Write property test for packet loss range
+    - **Property 11: Packet loss range**
+    - **Validates: Requirements 7.4**
+  - [x] 9.4 Implement getState() method
+    - Return current TransportState from atomic variable
+    - _Requirements: 7.5_
+  - [x] 9.5 Write property test for state validity
+    - **Property 12: State validity**
+    - **Validates: Requirements 7.5**
+  - [x] 9.6 Implement close() method
+    - Call lsquic_conn_close() to send CONNECTION_CLOSE
+    - Clean up all streams
+    - Transition to Disconnected state
+    - Invoke onDisconnected callback
+    - _Requirements: 8.1, 8.4_
+  - [x] 9.7 Write property test for close callback guarantee
+    - **Property 13: Close callback guarantee**
+    - **Validates: Requirements 8.4**
+  - [x] 9.8 Implement peer disconnect handling
+    - Handle on_conn_closed callback from lsquic
+    - Transition to Disconnected state
+    - Invoke onDisconnected callback
+    - _Requirements: 8.2, 8.3_
+
+- [x] 10. Implement resource cleanup
+  - [x] 10.1 Implement destructor
+    - Close connection if still open
+    - Destroy lsquic engine with lsquic_engine_destroy()
+    - Destroy NiceAgent
+    - Stop and unref GMainLoop
+    - _Requirements: 2.3_
+
+- [x] 11. Create public header file
+  - [x] 11.1 Create ice_quic_transport.hpp header
+    - Include all public types and classes
+    - Add comprehensive documentation comments
+    - Use proper include guards
+    - _Requirements: 10.1_
+
+- [x] 12. Create usage examples
+  - [x] 12.1 Create echo server example
+    - Initialize IceQuicTransport in server mode
+    - Print local candidates for manual exchange
+    - Accept remote candidates from stdin
+    - Echo received data back to sender
+    - _Requirements: 10.3, 10.4_
+  - [x] 12.2 Create echo client example
+    - Initialize IceQuicTransport in client mode
+    - Print local candidates for manual exchange
+    - Accept remote candidates from stdin
+    - Send user input and print received echo
+    - _Requirements: 10.2, 10.4_
+  - [x] 12.3 Create loopback test example
+    - Create both client and server in same process
+    - Exchange candidates programmatically
+    - Demonstrate full connection and data exchange
+    - _Requirements: 10.2, 10.3, 10.4_
+
+- [x] 13. Final Checkpoint - Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.

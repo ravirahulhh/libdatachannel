@@ -26,6 +26,7 @@ option(WARNINGS_AS_ERRORS "Treat warnings as errors" OFF)
 option(CAPI_STDCALL "Set calling convention of C API callbacks stdcall" OFF)
 option(SCTP_DEBUG "Enable SCTP debugging output to verbose log" OFF)
 option(RTC_UPDATE_VERSION_HEADER "Enable updating the version header" OFF)
+option(USE_QUIC "Enable QUIC transport with MsQuic" OFF)
 
 if (USE_GNUTLS AND USE_MBEDTLS)
 	message(FATAL_ERROR "Both USE_MBEDTLS and USE_GNUTLS cannot be enabled at the same time")
@@ -203,6 +204,18 @@ set(LIBDATACHANNEL_IMPL_HEADERS
 	${CMAKE_CURRENT_SOURCE_DIR}/src/impl/wstransport.hpp
 	${CMAKE_CURRENT_SOURCE_DIR}/src/impl/wshandshake.hpp
 )
+
+# QUIC transport support
+if(USE_QUIC)
+	message(STATUS "QUIC transport enabled")
+	list(APPEND LIBDATACHANNEL_IMPL_SOURCES
+		${CMAKE_CURRENT_SOURCE_DIR}/src/impl/quictransport.cpp
+	)
+	list(APPEND LIBDATACHANNEL_IMPL_HEADERS
+		${CMAKE_CURRENT_SOURCE_DIR}/src/impl/quictransport.hpp
+	)
+	add_compile_definitions(RTC_ENABLE_QUIC=1)
+endif()
 
 set(TESTS_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/test/main.cpp
@@ -472,6 +485,37 @@ else()
 	endif()
 endif()
 
+# QUIC transport with MsQuic
+if(USE_QUIC)
+	message(STATUS "QUIC transport enabled with MsQuic")
+	
+	# 配置 MsQuic 构建选项
+	set(QUIC_BUILD_SHARED OFF CACHE BOOL "Build MsQuic as shared library")
+	set(QUIC_BUILD_TEST OFF CACHE BOOL "Build MsQuic tests")
+	set(QUIC_BUILD_TOOLS OFF CACHE BOOL "Build MsQuic tools")
+	set(QUIC_BUILD_PERF OFF CACHE BOOL "Build MsQuic performance tests")
+	set(QUIC_ENABLE_LOGGING OFF CACHE BOOL "Enable MsQuic logging")
+	
+	# 添加 MsQuic 子目录
+	add_subdirectory(deps/msquic EXCLUDE_FROM_ALL)
+	
+	# 编译定义
+	target_compile_definitions(datachannel PRIVATE RTC_ENABLE_QUIC=1)
+	target_compile_definitions(datachannel-static PRIVATE RTC_ENABLE_QUIC=1)
+	
+	# 链接 MsQuic
+	target_link_libraries(datachannel PRIVATE msquic)
+	target_link_libraries(datachannel-static PRIVATE msquic)
+	
+	# 包含 MsQuic 头文件
+	target_include_directories(datachannel PRIVATE 
+		${CMAKE_CURRENT_SOURCE_DIR}/deps/msquic/src/inc)
+	target_include_directories(datachannel-static PRIVATE 
+		${CMAKE_CURRENT_SOURCE_DIR}/deps/msquic/src/inc)
+	
+	message(STATUS "MsQuic configured from deps/msquic")
+endif()
+
 if(CAPI_STDCALL)
 	target_compile_definitions(datachannel PUBLIC CAPI_STDCALL)
 	target_compile_definitions(datachannel-static PUBLIC CAPI_STDCALL)
@@ -578,26 +622,25 @@ endif()
 
 # Examples
 if(NOT NO_EXAMPLES)
-	set(JSON_BuildTests OFF CACHE INTERNAL "")
-	if(USE_SYSTEM_JSON)
-		find_package(nlohmann_json REQUIRED)
-	else()
-		add_subdirectory(deps/json EXCLUDE_FROM_ALL)
+	# QUIC examples (only if QUIC is enabled)
+	if(USE_QUIC)
+		# MsQuic simple test
+		add_executable(msquic-simple-test examples/msquic_simple_test.cpp)
+		set_target_properties(msquic-simple-test PROPERTIES
+			CXX_STANDARD 17
+			OUTPUT_NAME msquic_simple_test)
+		target_link_libraries(msquic-simple-test PRIVATE msquic)
+		target_include_directories(msquic-simple-test PRIVATE 
+			${CMAKE_CURRENT_SOURCE_DIR}/deps/msquic/src/inc)
+		
+		# QUIC DataChannel example
+		add_executable(quic-datachannel-example examples/quic_datachannel_example.cpp)
+		set_target_properties(quic-datachannel-example PROPERTIES
+			CXX_STANDARD 17
+			OUTPUT_NAME quic_datachannel_example)
+		target_link_libraries(quic-datachannel-example PRIVATE datachannel Threads::Threads)
+		
+		message(STATUS "QUIC examples enabled")
 	endif()
-
-	if(NOT NO_WEBSOCKET)
-		add_subdirectory(examples/client)
-		add_subdirectory(examples/client-benchmark)
-	endif()
-	if(NOT NO_MEDIA)
-		add_subdirectory(examples/media-receiver)
-		add_subdirectory(examples/media-sender)
-		add_subdirectory(examples/media-sfu)
-	endif()
-	if(NOT NO_MEDIA AND NOT NO_WEBSOCKET)
-    	add_subdirectory(examples/streamer)
-	endif()
-	add_subdirectory(examples/copy-paste)
-	add_subdirectory(examples/copy-paste-capi)
 endif()
 

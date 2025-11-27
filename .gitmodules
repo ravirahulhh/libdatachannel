@@ -17,3 +17,6 @@
 	path = deps/libsrtp
 	url = https://github.com/cisco/libsrtp.git
 	shallow = true
+[submodule "deps/msquic"]
+	path = deps/msquic
+	url = https://github.com/microsoft/msquic.git
