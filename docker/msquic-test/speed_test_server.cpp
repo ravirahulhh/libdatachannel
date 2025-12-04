@@ -23,9 +23,15 @@ HQUIC Listener = nullptr;
 
 // 统计数据
 atomic<uint64_t> TotalBytesReceived{0};
+atomic<uint64_t> SessionBytesReceived{0};  // 当前会话接收的字节数
 atomic<uint64_t> TotalConnections{0};
+atomic<uint64_t> ActiveConnections{0};
 atomic<bool> Running{true};
+atomic<bool> HasActiveSession{false};
 steady_clock::time_point StartTime;
+steady_clock::time_point SessionStartTime;
+uint64_t LastBytesReceived{0};  // 用于计算瞬时速度
+steady_clock::time_point LastStatsTime;
 mutex StatsMutex;
 
 // 配置
@@ -36,20 +42,41 @@ const uint16_t PORT = 9331;
 QUIC_CREDENTIAL_CONFIG CredConfig;
 
 void PrintStats() {
+    LastStatsTime = steady_clock::now();
+    LastBytesReceived = 0;
+    
     while (Running) {
-        this_thread::sleep_for(seconds(1));
+        this_thread::sleep_for(milliseconds(500));
         
         auto now = steady_clock::now();
-        auto elapsed = duration_cast<milliseconds>(now - StartTime).count();
+        uint64_t currentBytes = SessionBytesReceived;
         
-        if (elapsed > 0) {
-            double mbps = (TotalBytesReceived * 8.0) / (elapsed * 1000.0); // Mbps
-            double gbReceived = TotalBytesReceived / (1024.0 * 1024.0 * 1024.0);
-            
-            cout << "\r[Server] Connections: " << TotalConnections 
-                 << " | Received: " << fixed << setprecision(2) << gbReceived << " GB"
-                 << " | Speed: " << mbps << " Mbps" << flush;
+        // 计算瞬时速度 (基于上次统计间隔)
+        auto intervalMs = duration_cast<milliseconds>(now - LastStatsTime).count();
+        double instantMbps = 0;
+        if (intervalMs > 0) {
+            uint64_t deltaBytes = currentBytes - LastBytesReceived;
+            instantMbps = (deltaBytes * 8.0) / (intervalMs * 1000.0);
         }
+        
+        // 计算平均速度 (基于会话开始时间)
+        double avgMbps = 0;
+        if (HasActiveSession) {
+            auto sessionElapsed = duration_cast<milliseconds>(now - SessionStartTime).count();
+            if (sessionElapsed > 0) {
+                avgMbps = (currentBytes * 8.0) / (sessionElapsed * 1000.0);
+            }
+        }
+        
+        double mbReceived = currentBytes / (1024.0 * 1024.0);
+        
+        cout << "\r[Server] Active: " << ActiveConnections
+             << " | Received: " << fixed << setprecision(2) << mbReceived << " MB"
+             << " | Instant: " << instantMbps << " Mbps"
+             << " | Avg: " << avgMbps << " Mbps    " << flush;
+        
+        LastBytesReceived = currentBytes;
+        LastStatsTime = now;
     }
 }
 
@@ -57,10 +84,21 @@ QUIC_STATUS QUIC_API StreamCallback(HQUIC Stream, void* Context, QUIC_STREAM_EVE
     switch (Event->Type) {
     case QUIC_STREAM_EVENT_RECEIVE:
         TotalBytesReceived += Event->RECEIVE.TotalBufferLength;
+        SessionBytesReceived += Event->RECEIVE.TotalBufferLength;
         break;
         
     case QUIC_STREAM_EVENT_PEER_SEND_SHUTDOWN:
-        cout << "\n[Server] Stream peer send shutdown" << endl;
+        {
+            auto now = steady_clock::now();
+            auto elapsed = duration_cast<milliseconds>(now - SessionStartTime).count();
+            double avgMbps = (SessionBytesReceived * 8.0) / (elapsed * 1000.0);
+            double gbReceived = SessionBytesReceived / (1024.0 * 1024.0 * 1024.0);
+            
+            cout << "\n[Server] Stream completed!" << endl;
+            cout << "[Server] Session received: " << fixed << setprecision(3) << gbReceived << " GB" << endl;
+            cout << "[Server] Session time: " << (elapsed / 1000.0) << " seconds" << endl;
+            cout << "[Server] Average speed: " << avgMbps << " Mbps" << endl;
+        }
         MsQuic->StreamShutdown(Stream, QUIC_STREAM_SHUTDOWN_FLAG_GRACEFUL, 0);
         break;
         
@@ -78,7 +116,11 @@ QUIC_STATUS QUIC_API ConnectionCallback(HQUIC Connection, void* Context, QUIC_CO
     switch (Event->Type) {
     case QUIC_CONNECTION_EVENT_CONNECTED:
         TotalConnections++;
-        cout << "\n[Server] Client connected! Total: " << TotalConnections << endl;
+        ActiveConnections++;
+        SessionBytesReceived = 0;  // 重置会话统计
+        SessionStartTime = steady_clock::now();
+        HasActiveSession = true;
+        cout << "\n[Server] Client connected! Active: " << ActiveConnections << ", Total: " << TotalConnections << endl;
         MsQuic->ConnectionSendResumptionTicket(Connection, QUIC_SEND_RESUMPTION_FLAG_NONE, 0, nullptr);
         break;
         
@@ -92,6 +134,8 @@ QUIC_STATUS QUIC_API ConnectionCallback(HQUIC Connection, void* Context, QUIC_CO
         break;
         
     case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE:
+        ActiveConnections--;
+        HasActiveSession = (ActiveConnections > 0);
         MsQuic->ConnectionClose(Connection);
         break;
         
