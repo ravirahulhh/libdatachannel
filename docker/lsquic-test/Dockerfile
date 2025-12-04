@@ -44,13 +44,17 @@ WORKDIR /src
 # 克隆并编译 BoringSSL
 RUN git clone --depth=1 https://github.com/google/boringssl.git && \
     cd boringssl && \
-    cmake -DCMAKE_BUILD_TYPE=Release . && \
+    mkdir build && cd build && \
+    cmake -DCMAKE_BUILD_TYPE=Release .. && \
     make -j$(nproc)
 
 # 克隆并编译 lsquic
 RUN git clone --recursive https://github.com/litespeedtech/lsquic.git && \
     cd lsquic && \
-    cmake -DLIBSSL_DIR=/src/boringssl \
+    cmake -DBORINGSSL_DIR=/src/boringssl \
+          -DBORINGSSL_LIB=/src/boringssl/build/ssl \
+          -DBORINGSSL_LIB_ssl=/src/boringssl/build/ssl/libssl.a \
+          -DBORINGSSL_LIB_crypto=/src/boringssl/build/crypto/libcrypto.a \
           -DCMAKE_BUILD_TYPE=Release \
           -DLSQUIC_BIN=ON \
           . && \

@@ -20,15 +20,15 @@ if(NOT LSQUIC_LIB)
     set(LSQUIC_LIB ${LSQUIC_DIR}/src/liblsquic/liblsquic.a)
 endif()
 
-# 查找 BoringSSL 库
-find_library(SSL_LIB ssl PATHS ${BORINGSSL_DIR}/ssl NO_DEFAULT_PATH)
+# 查找 BoringSSL 库 (编译在 build 子目录)
+find_library(SSL_LIB ssl PATHS ${BORINGSSL_DIR}/build/ssl NO_DEFAULT_PATH)
 if(NOT SSL_LIB)
-    set(SSL_LIB ${BORINGSSL_DIR}/ssl/libssl.a)
+    set(SSL_LIB ${BORINGSSL_DIR}/build/ssl/libssl.a)
 endif()
 
-find_library(CRYPTO_LIB crypto PATHS ${BORINGSSL_DIR}/crypto NO_DEFAULT_PATH)
+find_library(CRYPTO_LIB crypto PATHS ${BORINGSSL_DIR}/build/crypto NO_DEFAULT_PATH)
 if(NOT CRYPTO_LIB)
-    set(CRYPTO_LIB ${BORINGSSL_DIR}/crypto/libcrypto.a)
+    set(CRYPTO_LIB ${BORINGSSL_DIR}/build/crypto/libcrypto.a)
 endif()
 
 message(STATUS "LSQUIC_LIB: ${LSQUIC_LIB}")
