@@ -1,0 +1,52 @@
+# MsQuic 速度测试 Docker Compose 配置
+# 用于在两台服务器之间测试 QUIC 传输速度
+
+version: '3.8'
+
+services:
+  # 服务端 - 在服务器 A 上运行
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: msquic-server
+    hostname: msquic-server
+    ports:
+      - "4433:4433/udp"
+    volumes:
+      - ./certs:/app/certs:ro
+    networks:
+      - quic-net
+    command: >
+      bash -c "
+        cd /app &&
+        openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj '/CN=localhost' 2>/dev/null &&
+        ./build/speed_test_server
+      "
+    restart: unless-stopped
+
+  # 客户端 - 在服务器 B 上运行
+  client:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: msquic-client
+    hostname: msquic-client
+    depends_on:
+      - server
+    networks:
+      - quic-net
+    environment:
+      - SERVER_HOST=msquic-server
+      - DATA_SIZE_GB=1
+    command: >
+      bash -c "
+        echo 'Waiting for server to start...' &&
+        sleep 5 &&
+        cd /app &&
+        ./build/speed_test_client -s $${SERVER_HOST:-msquic-server} -g $${DATA_SIZE_GB:-1}
+      "
+
+networks:
+  quic-net:
+    driver: bridge
