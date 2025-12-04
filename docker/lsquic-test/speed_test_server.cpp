@@ -181,6 +181,9 @@ static int send_packets(void *ctx, const struct lsquic_out_spec *specs, unsigned
     return n_sent;
 }
 
+// 调试计数器
+static atomic<uint64_t> g_udp_packets{0};
+
 // 处理接收的数据包
 static void read_socket(evutil_socket_t fd, short what, void *arg) {
     unsigned char buf[0xFFFF];
@@ -191,12 +194,22 @@ static void read_socket(evutil_socket_t fd, short what, void *arg) {
                           (struct sockaddr*)&peer_addr, &peer_addr_len);
     
     if (nr > 0) {
+        g_udp_packets++;
+        if (g_udp_packets <= 5) {
+            char addr_str[INET_ADDRSTRLEN];
+            struct sockaddr_in *sin = (struct sockaddr_in*)&peer_addr;
+            inet_ntop(AF_INET, &sin->sin_addr, addr_str, sizeof(addr_str));
+            cout << "\n[DEBUG] Received UDP packet #" << g_udp_packets 
+                 << " from " << addr_str << ":" << ntohs(sin->sin_port)
+                 << " size=" << nr << " bytes" << endl;
+        }
+        
         int ret = lsquic_engine_packet_in(g_engine, buf, nr,
                                           (struct sockaddr*)&g_local_addr,
                                           (struct sockaddr*)&peer_addr,
                                           nullptr, 0);
-        if (ret != 0) {
-            // 处理错误
+        if (ret != 0 && g_udp_packets <= 5) {
+            cout << "[DEBUG] lsquic_engine_packet_in returned: " << ret << endl;
         }
     }
     

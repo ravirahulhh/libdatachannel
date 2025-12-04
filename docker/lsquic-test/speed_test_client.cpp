@@ -28,6 +28,9 @@ extern "C" {
 using namespace std;
 using namespace std::chrono;
 
+// SSL 上下文
+static SSL_CTX *g_ssl_ctx = nullptr;
+
 // 全局变量
 static lsquic_engine_t *g_engine = nullptr;
 static lsquic_conn_t *g_conn = nullptr;
@@ -283,6 +286,29 @@ static bool init_socket() {
     return true;
 }
 
+// SSL 回调 - 客户端需要提供 SSL_CTX
+static SSL_CTX* get_ssl_ctx(void *peer_ctx, const struct sockaddr *local) {
+    return g_ssl_ctx;
+}
+
+// 初始化 SSL (客户端模式)
+static bool init_ssl() {
+    g_ssl_ctx = SSL_CTX_new(TLS_client_method());
+    if (!g_ssl_ctx) {
+        cerr << "Failed to create SSL context" << endl;
+        return false;
+    }
+    
+    // 客户端不验证服务器证书 (测试用)
+    SSL_CTX_set_verify(g_ssl_ctx, SSL_VERIFY_NONE, nullptr);
+    
+    // 设置 ALPN (lsquic 需要)
+    static const unsigned char alpn[] = "\x02h3";  // HTTP/3
+    SSL_CTX_set_alpn_protos(g_ssl_ctx, alpn, sizeof(alpn) - 1);
+    
+    return true;
+}
+
 // 初始化 lsquic 引擎
 static bool init_engine() {
     if (lsquic_global_init(LSQUIC_GLOBAL_CLIENT) != 0) {
@@ -303,6 +329,7 @@ static bool init_engine() {
     api.ea_stream_if_ctx = nullptr;
     api.ea_packets_out = send_packets;
     api.ea_packets_out_ctx = nullptr;
+    api.ea_get_ssl_ctx = get_ssl_ctx;  // 添加 SSL 回调
     
     g_engine = lsquic_engine_new(0, &api);  // Client mode
     if (!g_engine) {
@@ -387,6 +414,10 @@ int main(int argc, char *argv[]) {
     g_send_buffer.resize(g_buffer_size, 'X');
     g_total_to_send = g_data_size_gb * 1024ULL * 1024ULL * 1024ULL;
     
+    if (!init_ssl()) {
+        return 1;
+    }
+    
     if (!init_socket()) {
         return 1;
     }
@@ -428,6 +459,7 @@ int main(int argc, char *argv[]) {
     if (g_event_base) event_base_free(g_event_base);
     if (g_engine) lsquic_engine_destroy(g_engine);
     if (g_socket_fd >= 0) close(g_socket_fd);
+    if (g_ssl_ctx) SSL_CTX_free(g_ssl_ctx);
     lsquic_global_cleanup();
     
     return 0;
