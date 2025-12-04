@@ -40,11 +40,12 @@ static struct sockaddr_storage g_local_addr;
 static struct sockaddr_storage g_peer_addr;
 
 // 统计数据
-static atomic<uint64_t> g_bytes_sent{0};
-static atomic<uint64_t> g_bytes_acked{0};
+static atomic<uint64_t> g_bytes_queued{0};    // 写入 lsquic 缓冲区的字节数
+static atomic<uint64_t> g_bytes_sent{0};      // 实际发送到网络的字节数 (从连接统计获取)
 static atomic<bool> g_connected{false};
 static atomic<bool> g_running{true};
 static atomic<bool> g_complete{false};
+static atomic<bool> g_stream_closed{false};   // 流是否已关闭 (表示所有数据已确认)
 static steady_clock::time_point g_start_time;
 
 // 配置
@@ -58,6 +59,16 @@ static vector<uint8_t> g_send_buffer;
 static uint64_t g_total_to_send = 0;
 static uint64_t g_sent = 0;
 
+// 获取连接统计中的已发送字节数
+static uint64_t get_bytes_sent_from_stats() {
+    if (!g_conn) return 0;
+    
+    struct lsquic_conn_stats stats;
+    lsquic_conn_stats(g_conn, &stats);
+    // out.bytes 是实际发送到网络的字节数
+    return stats.out.bytes;
+}
+
 // 打印统计信息
 void print_stats() {
     while (g_running && !g_complete) {
@@ -68,13 +79,19 @@ void print_stats() {
         auto now = steady_clock::now();
         auto elapsed = duration_cast<milliseconds>(now - g_start_time).count();
         
+        // 更新实际发送的字节数
+        g_bytes_sent = get_bytes_sent_from_stats();
+        
         if (elapsed > 0) {
-            double mbps = (g_bytes_sent * 8.0) / (elapsed * 1000.0);
+            double mbps_queued = (g_bytes_queued * 8.0) / (elapsed * 1000.0);
+            double mbps_sent = (g_bytes_sent * 8.0) / (elapsed * 1000.0);
+            double mb_queued = g_bytes_queued / (1024.0 * 1024.0);
             double mb_sent = g_bytes_sent / (1024.0 * 1024.0);
-            double progress = (g_bytes_sent * 100.0) / g_total_to_send;
+            double progress = (g_bytes_queued * 100.0) / g_total_to_send;
             
-            cout << "\r[Client] Sent: " << fixed << setprecision(2) << mb_sent << " MB"
-                 << " | Speed: " << mbps << " Mbps"
+            cout << "\r[Client] Queued: " << fixed << setprecision(2) << mb_queued << " MB"
+                 << " | Sent: " << mb_sent << " MB"
+                 << " | Speed: " << mbps_sent << " Mbps"
                  << " | Progress: " << progress << "%    " << flush;
         }
     }
@@ -113,19 +130,10 @@ static void on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *ctx) {
 
 static void on_write(lsquic_stream_t *stream, lsquic_stream_ctx_t *ctx) {
     if (g_sent >= g_total_to_send) {
-        // 发送完成
-        lsquic_stream_shutdown(stream, 1);
+        // 所有数据已写入缓冲区，关闭写端
+        lsquic_stream_shutdown(stream, 1);  // 发送 FIN
         lsquic_stream_wantwrite(stream, 0);
-        
-        auto end_time = steady_clock::now();
-        auto elapsed = duration_cast<milliseconds>(end_time - g_start_time).count();
-        
-        cout << "\n\n=== Transfer Complete ===" << endl;
-        cout << "Total sent: " << (g_bytes_sent / (1024.0 * 1024.0 * 1024.0)) << " GB" << endl;
-        cout << "Time: " << (elapsed / 1000.0) << " seconds" << endl;
-        cout << "Average speed: " << ((g_bytes_sent * 8.0) / (elapsed * 1000.0)) << " Mbps" << endl;
-        
-        g_complete = true;
+        cout << "\n[Client] All data queued, waiting for transmission to complete..." << endl;
         return;
     }
     
@@ -136,7 +144,7 @@ static void on_write(lsquic_stream_t *stream, lsquic_stream_ctx_t *ctx) {
         
         if (nw > 0) {
             g_sent += nw;
-            g_bytes_sent = g_sent;
+            g_bytes_queued = g_sent;
         } else if (nw == 0) {
             // 缓冲区满，等待下次回调
             break;
@@ -150,7 +158,23 @@ static void on_write(lsquic_stream_t *stream, lsquic_stream_ctx_t *ctx) {
 }
 
 static void on_close(lsquic_stream_t *stream, lsquic_stream_ctx_t *ctx) {
+    // 流关闭意味着所有数据都已被对端确认接收
     g_stream = nullptr;
+    g_stream_closed = true;
+    
+    auto end_time = steady_clock::now();
+    auto elapsed = duration_cast<milliseconds>(end_time - g_start_time).count();
+    
+    // 获取最终统计
+    g_bytes_sent = get_bytes_sent_from_stats();
+    
+    cout << "\n\n=== Transfer Complete (Stream Closed - All Data ACKed) ===" << endl;
+    cout << "Total queued: " << (g_bytes_queued / (1024.0 * 1024.0 * 1024.0)) << " GB" << endl;
+    cout << "Total sent: " << (g_bytes_sent / (1024.0 * 1024.0)) << " MB (network bytes)" << endl;
+    cout << "Time: " << (elapsed / 1000.0) << " seconds" << endl;
+    cout << "Average speed: " << ((g_bytes_queued * 8.0) / (elapsed * 1000.0)) << " Mbps (payload)" << endl;
+    
+    g_complete = true;
 }
 
 static const struct lsquic_stream_if stream_if = {
@@ -217,10 +241,10 @@ static void timer_handler(evutil_socket_t fd, short what, void *arg) {
         event_add(g_timer_event, &tv);
     }
     
-    if (g_complete) {
-        // 等待一小段时间让数据发送完成
+    if (g_complete && g_stream_closed) {
+        // 流已关闭，所有数据已确认，可以退出
         static int wait_count = 0;
-        if (++wait_count > 20) {
+        if (++wait_count > 10) {
             event_base_loopbreak(g_event_base);
         }
     }
