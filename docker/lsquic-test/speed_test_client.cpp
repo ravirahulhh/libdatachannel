@@ -91,10 +91,19 @@ static lsquic_conn_ctx_t* on_new_conn(void *stream_if_ctx, lsquic_conn_t *conn) 
     g_conn = conn;
     g_connected = true;
     g_start_time = steady_clock::now();
-    cout << "\n[Client] Connected to server!" << endl;
     
-    // 创建流
-    lsquic_conn_make_stream(conn);
+    // 检查连接状态
+    enum lsquic_conn_status status = lsquic_conn_status(conn, nullptr, 0);
+    cout << "\n[Client] on_new_conn called, status=" << status << endl;
+    
+    if (status == LSCONN_ST_CONNECTED || status == LSCONN_ST_HANDSHAKE_IN_PROGRESS) {
+        cout << "[Client] Connected to server!" << endl;
+        // 创建流
+        lsquic_conn_make_stream(conn);
+    } else {
+        cout << "[Client] Connection not ready yet, status=" << status << endl;
+    }
+    
     return nullptr;
 }
 
@@ -184,14 +193,30 @@ static int send_packets(void *ctx, const struct lsquic_out_spec *specs, unsigned
         msg.msg_iov = specs[i].iov;
         msg.msg_iovlen = specs[i].iovlen;
         
-        if (sendmsg(g_socket_fd, &msg, 0) < 0) {
+        ssize_t ret = sendmsg(g_socket_fd, &msg, 0);
+        if (ret < 0) {
+            if (g_packets_sent < 10) {
+                cerr << "[DEBUG] sendmsg failed: " << strerror(errno) << endl;
+            }
             break;
         }
         ++n_sent;
+        g_packets_sent++;
+        if (g_packets_sent <= 10) {
+            size_t total_len = 0;
+            for (int j = 0; j < specs[i].iovlen; j++) {
+                total_len += specs[i].iov[j].iov_len;
+            }
+            cout << "[DEBUG] Sent packet #" << g_packets_sent << " size=" << total_len << endl;
+        }
     }
     
     return n_sent;
 }
+
+// 调试计数器
+static atomic<uint64_t> g_packets_sent{0};
+static atomic<uint64_t> g_packets_recv{0};
 
 // 处理接收的数据包
 static void read_socket(evutil_socket_t fd, short what, void *arg) {
@@ -203,10 +228,18 @@ static void read_socket(evutil_socket_t fd, short what, void *arg) {
                           (struct sockaddr*)&peer_addr, &peer_addr_len);
     
     if (nr > 0) {
-        lsquic_engine_packet_in(g_engine, buf, nr,
+        g_packets_recv++;
+        if (g_packets_recv <= 10) {
+            cout << "[DEBUG] Received packet #" << g_packets_recv << " size=" << nr << endl;
+        }
+        
+        int ret = lsquic_engine_packet_in(g_engine, buf, nr,
                                 (struct sockaddr*)&g_local_addr,
                                 (struct sockaddr*)&peer_addr,
                                 nullptr, 0);
+        if (ret != 0 && g_packets_recv <= 10) {
+            cout << "[DEBUG] packet_in returned: " << ret << endl;
+        }
     }
     
     lsquic_engine_process_conns(g_engine);
@@ -286,11 +319,6 @@ static bool init_socket() {
     return true;
 }
 
-// SSL 回调 - 客户端需要提供 SSL_CTX
-static SSL_CTX* get_ssl_ctx(void *peer_ctx, const struct sockaddr *local) {
-    return g_ssl_ctx;
-}
-
 // 初始化 SSL (客户端模式)
 static bool init_ssl() {
     g_ssl_ctx = SSL_CTX_new(TLS_client_method());
@@ -302,9 +330,9 @@ static bool init_ssl() {
     // 客户端不验证服务器证书 (测试用)
     SSL_CTX_set_verify(g_ssl_ctx, SSL_VERIFY_NONE, nullptr);
     
-    // 设置 ALPN (lsquic 需要)
-    static const unsigned char alpn[] = "\x02h3";  // HTTP/3
-    SSL_CTX_set_alpn_protos(g_ssl_ctx, alpn, sizeof(alpn) - 1);
+    // 设置最小 TLS 版本为 1.3 (QUIC 要求)
+    SSL_CTX_set_min_proto_version(g_ssl_ctx, TLS1_3_VERSION);
+    SSL_CTX_set_max_proto_version(g_ssl_ctx, TLS1_3_VERSION);
     
     return true;
 }
@@ -324,14 +352,21 @@ static bool init_engine() {
     settings.es_max_streams_in = 100;
     settings.es_idle_timeout = 60;
     
+    // 验证设置
+    char errbuf[256];
+    if (lsquic_engine_check_settings(&settings, 0, errbuf, sizeof(errbuf)) != 0) {
+        cerr << "Invalid settings: " << errbuf << endl;
+        return false;
+    }
+    
     api.ea_settings = &settings;
     api.ea_stream_if = &stream_if;
     api.ea_stream_if_ctx = nullptr;
     api.ea_packets_out = send_packets;
     api.ea_packets_out_ctx = nullptr;
-    api.ea_get_ssl_ctx = get_ssl_ctx;  // 添加 SSL 回调
+    // 客户端不需要 ea_get_ssl_ctx，lsquic 会自动处理
     
-    g_engine = lsquic_engine_new(0, &api);  // Client mode
+    g_engine = lsquic_engine_new(0, &api);  // Client mode (0 = client)
     if (!g_engine) {
         cerr << "Failed to create lsquic engine" << endl;
         return false;
