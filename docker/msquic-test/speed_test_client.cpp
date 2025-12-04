@@ -24,10 +24,15 @@ HQUIC Stream = nullptr;
 
 // 统计数据
 atomic<uint64_t> TotalBytesSent{0};
+atomic<uint64_t> TotalBytesAcked{0};  // 已确认发送的字节数
+atomic<uint32_t> PendingBuffers{0};   // 待确认的缓冲区数量
 atomic<bool> Connected{false};
 atomic<bool> Running{true};
 atomic<bool> SendComplete{false};
 steady_clock::time_point StartTime;
+
+// 流控配置
+const uint32_t MaxPendingBuffers = 64;  // 最大待确认缓冲区数
 
 // 配置
 const char* ALPN = "speedtest";
@@ -44,12 +49,15 @@ void PrintStats() {
         auto elapsed = duration_cast<milliseconds>(now - StartTime).count();
         
         if (elapsed > 0 && Connected) {
-            double mbps = (TotalBytesSent * 8.0) / (elapsed * 1000.0);
+            double mbps = (TotalBytesAcked * 8.0) / (elapsed * 1000.0);
             double mbSent = TotalBytesSent / (1024.0 * 1024.0);
-            double progress = (TotalBytesSent * 100.0) / (DataSizeGB * 1024 * 1024 * 1024);
+            double mbAcked = TotalBytesAcked / (1024.0 * 1024.0);
+            double progress = (TotalBytesAcked * 100.0) / (DataSizeGB * 1024 * 1024 * 1024);
             
-            cout << "\r[Client] Sent: " << fixed << setprecision(2) << mbSent << " MB"
+            cout << "\r[Client] Queued: " << fixed << setprecision(2) << mbSent << " MB"
+                 << " | Acked: " << mbAcked << " MB"
                  << " | Speed: " << mbps << " Mbps"
+                 << " | Pending: " << PendingBuffers
                  << " | Progress: " << progress << "%" << flush;
         }
     }
@@ -58,8 +66,13 @@ void PrintStats() {
 QUIC_STATUS QUIC_API StreamCallback(HQUIC Stream, void* Context, QUIC_STREAM_EVENT* Event) {
     switch (Event->Type) {
     case QUIC_STREAM_EVENT_SEND_COMPLETE:
-        // 发送完成，可以继续发送
-        free(Event->SEND_COMPLETE.ClientContext);
+        // 发送完成，更新统计
+        if (Event->SEND_COMPLETE.ClientContext) {
+            QUIC_BUFFER* buffer = (QUIC_BUFFER*)Event->SEND_COMPLETE.ClientContext;
+            TotalBytesAcked += buffer->Length;
+            free(buffer);
+        }
+        PendingBuffers--;
         break;
         
     case QUIC_STREAM_EVENT_PEER_SEND_SHUTDOWN:
@@ -194,10 +207,17 @@ void SendData() {
     uint64_t totalToSend = DataSizeGB * 1024ULL * 1024ULL * 1024ULL;
     uint64_t sent = 0;
     
-    // 创建发送缓冲区
+    // 创建发送缓冲区模板
     vector<uint8_t> dataPattern(BufferSize, 'X');
     
     while (sent < totalToSend && Running) {
+        // 流控：等待待确认缓冲区数量降低
+        while (PendingBuffers >= MaxPendingBuffers && Running) {
+            this_thread::sleep_for(microseconds(500));
+        }
+        
+        if (!Running) break;
+        
         uint32_t chunkSize = min((uint64_t)BufferSize, totalToSend - sent);
         
         // 分配缓冲区
@@ -209,34 +229,35 @@ void SendData() {
         QUIC_SEND_FLAGS flags = (sent + chunkSize >= totalToSend) ? 
                                 QUIC_SEND_FLAG_FIN : QUIC_SEND_FLAG_NONE;
         
+        PendingBuffers++;
         status = MsQuic->StreamSend(Stream, buffer, 1, flags, buffer);
         if (QUIC_FAILED(status)) {
             cerr << "\nStreamSend failed: 0x" << hex << status << endl;
+            PendingBuffers--;
             free(buffer);
             break;
         }
         
         sent += chunkSize;
         TotalBytesSent = sent;
-        
-        // 简单的流控：避免发送过快
-        if (sent % (10 * 1024 * 1024) == 0) {
-            this_thread::sleep_for(microseconds(100));
-        }
     }
     
-    // 等待发送完成
-    while (!SendComplete && Running) {
+    // 等待所有数据发送完成
+    cout << "\n[Client] Waiting for all data to be acknowledged..." << endl;
+    int waitCount = 0;
+    while (!SendComplete && Running && waitCount < 300) {  // 最多等待30秒
         this_thread::sleep_for(milliseconds(100));
+        waitCount++;
     }
     
     auto endTime = steady_clock::now();
     auto elapsed = duration_cast<milliseconds>(endTime - StartTime).count();
     
-    cout << "\n\n=== Transfer Complete ===" << endl;
-    cout << "Total sent: " << (TotalBytesSent / (1024.0 * 1024.0 * 1024.0)) << " GB" << endl;
+    cout << "\n=== Transfer Complete ===" << endl;
+    cout << "Total queued: " << (TotalBytesSent / (1024.0 * 1024.0 * 1024.0)) << " GB" << endl;
+    cout << "Total acked: " << (TotalBytesAcked / (1024.0 * 1024.0 * 1024.0)) << " GB" << endl;
     cout << "Time: " << (elapsed / 1000.0) << " seconds" << endl;
-    cout << "Average speed: " << ((TotalBytesSent * 8.0) / (elapsed * 1000.0)) << " Mbps" << endl;
+    cout << "Average speed: " << ((TotalBytesAcked * 8.0) / (elapsed * 1000.0)) << " Mbps" << endl;
 }
 
 void Cleanup() {
