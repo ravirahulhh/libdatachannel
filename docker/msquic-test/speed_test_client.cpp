@@ -154,10 +154,10 @@ bool ConnectToServer() {
         return false;
     }
     
-    cout << "[Client] Connecting to " << ServerAddress << ":" << PORT << "..." << endl;
+    cout << "[Client] Connecting to " << ServerAddress << ":" << ServerPort << "..." << endl;
     
     status = MsQuic->ConnectionStart(Connection, Configuration, QUIC_ADDRESS_FAMILY_UNSPEC, 
-                                     ServerAddress.c_str(), PORT);
+                                     ServerAddress.c_str(), ServerPort);
     if (QUIC_FAILED(status)) {
         cerr << "ConnectionStart failed: 0x" << hex << status << endl;
         return false;
@@ -269,11 +269,15 @@ void PrintUsage(const char* prog) {
     cout << "  -h            Show this help" << endl;
 }
 
+uint16_t ServerPort = 4433;
+
 int main(int argc, char* argv[]) {
     // 解析命令行参数
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
             ServerAddress = argv[++i];
+        } else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) {
+            ServerPort = atoi(argv[++i]);
         } else if (strcmp(argv[i], "-g") == 0 && i + 1 < argc) {
             DataSizeGB = atoi(argv[++i]);
         } else if (strcmp(argv[i], "-b") == 0 && i + 1 < argc) {
@@ -285,7 +289,7 @@ int main(int argc, char* argv[]) {
     }
     
     cout << "=== MsQuic Speed Test Client ===" << endl;
-    cout << "Server: " << ServerAddress << ":" << PORT << endl;
+    cout << "Server: " << ServerAddress << ":" << ServerPort << endl;
     cout << "Data size: " << DataSizeGB << " GB" << endl;
     cout << "Buffer size: " << (BufferSize / 1024) << " KB" << endl;
     

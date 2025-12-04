@@ -99,12 +99,14 @@ start_client() {
     done
     
     if [ -z "$server_addr" ]; then
-        print_error "请指定服务器地址: $0 client -s <server_ip>"
+        print_error "请指定服务器地址: $0 client -s <server_ip> -p <port> -g <size_gb>"
+        print_error "示例: $0 client -s 192.168.1.100 -p 4433 -g 5"
         exit 1
     fi
     
     print_info "启动 MsQuic 客户端..."
-    print_info "服务器: $server_addr:$port"
+    print_info "服务器: $server_addr"
+    print_info "端口: $port"
     print_info "数据量: ${data_size}GB"
     
     # 停止已存在的容器
@@ -115,7 +117,7 @@ start_client() {
         --name msquic-client \
         --network host \
         msquic-speed-test:latest \
-        /app/build/speed_test_client -s "$server_addr" -g "$data_size"
+        /app/build/speed_test_client -s "$server_addr" -p "$port" -g "$data_size"
 }
 
 # 本地测试
