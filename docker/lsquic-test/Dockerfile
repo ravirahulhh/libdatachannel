@@ -61,6 +61,11 @@ RUN git clone --recursive https://github.com/litespeedtech/lsquic.git && \
           . && \
     make -j$(nproc)
 
+# 验证编译产物
+RUN ls -la /src/boringssl/build/ssl/ && \
+    ls -la /src/boringssl/build/crypto/ && \
+    ls -la /src/lsquic/src/liblsquic/
+
 # 复制测试程序源码
 WORKDIR /app
 COPY speed_test_server.cpp .
