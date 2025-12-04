@@ -20,9 +20,17 @@ if(NOT LSQUIC_LIB)
     set(LSQUIC_LIB ${LSQUIC_DIR}/src/liblsquic/liblsquic.a)
 endif()
 
-# BoringSSL 库路径 (直接指定，因为是静态库)
-set(SSL_LIB ${BORINGSSL_DIR}/build/ssl/libssl.a)
-set(CRYPTO_LIB ${BORINGSSL_DIR}/build/crypto/libcrypto.a)
+# BoringSSL 库路径 - 尝试多个可能的位置
+# 新版 BoringSSL 直接在 build/ 下，旧版在 build/ssl/ 和 build/crypto/ 下
+if(EXISTS ${BORINGSSL_DIR}/build/libssl.a)
+    set(SSL_LIB ${BORINGSSL_DIR}/build/libssl.a)
+    set(CRYPTO_LIB ${BORINGSSL_DIR}/build/libcrypto.a)
+elseif(EXISTS ${BORINGSSL_DIR}/build/ssl/libssl.a)
+    set(SSL_LIB ${BORINGSSL_DIR}/build/ssl/libssl.a)
+    set(CRYPTO_LIB ${BORINGSSL_DIR}/build/crypto/libcrypto.a)
+else()
+    message(FATAL_ERROR "BoringSSL libraries not found in ${BORINGSSL_DIR}/build/")
+endif()
 
 # 验证文件存在
 if(NOT EXISTS ${SSL_LIB})

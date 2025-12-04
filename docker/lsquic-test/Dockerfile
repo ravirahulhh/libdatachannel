@@ -49,12 +49,13 @@ RUN git clone --depth=1 https://github.com/google/boringssl.git && \
     make -j$(nproc)
 
 # 克隆并编译 lsquic (只编译库，不编译示例程序)
+# 注意：新版 BoringSSL 库文件直接在 build/ 目录下
 RUN git clone --recursive https://github.com/litespeedtech/lsquic.git && \
     cd lsquic && \
     cmake -DBORINGSSL_DIR=/src/boringssl \
           -DBORINGSSL_LIB=/src/boringssl/build \
-          -DBORINGSSL_LIB_ssl=/src/boringssl/build/ssl/libssl.a \
-          -DBORINGSSL_LIB_crypto=/src/boringssl/build/crypto/libcrypto.a \
+          -DBORINGSSL_LIB_ssl=/src/boringssl/build/libssl.a \
+          -DBORINGSSL_LIB_crypto=/src/boringssl/build/libcrypto.a \
           -DCMAKE_BUILD_TYPE=Release \
           -DLSQUIC_BIN=OFF \
           -DLSQUIC_TESTS=OFF \
