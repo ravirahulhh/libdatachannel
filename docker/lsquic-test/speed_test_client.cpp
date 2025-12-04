@@ -90,18 +90,26 @@ void print_stats() {
 }
 
 
+// 握手完成回调
+static void on_hsk_done(lsquic_conn_t *conn, enum lsquic_hsk_status status) {
+    cout << "[Client] Handshake done, status=" << (int)status << endl;
+    if (status == LSQ_HSK_OK || status == LSQ_HSK_RESUMED_OK) {
+        cout << "[Client] Handshake successful!" << endl;
+        g_connected = true;
+        g_start_time = steady_clock::now();
+        // 握手成功后创建流
+        lsquic_conn_make_stream(conn);
+    } else {
+        cout << "[Client] Handshake failed!" << endl;
+        g_running = false;
+    }
+}
+
 // lsquic 回调函数
 static lsquic_conn_ctx_t* on_new_conn(void *stream_if_ctx, lsquic_conn_t *conn) {
     g_conn = conn;
-    g_connected = true;
-    g_start_time = steady_clock::now();
-    
-    cout << "\n[Client] on_new_conn called" << endl;
-    cout << "[Client] Connected to server!" << endl;
-    
-    // 创建流
-    lsquic_conn_make_stream(conn);
-    
+    cout << "\n[Client] on_new_conn called (connection object created)" << endl;
+    // 不要在这里创建流，等待握手完成
     return nullptr;
 }
 
@@ -175,6 +183,7 @@ static const struct lsquic_stream_if stream_if = {
     .on_read = on_read,
     .on_write = on_write,
     .on_close = on_close,
+    .on_hsk_done = on_hsk_done,
 };
 
 // 发送数据包
@@ -373,6 +382,15 @@ static bool init_engine() {
 static bool connect_to_server() {
     cout << "[Client] Connecting to " << g_server_addr << ":" << g_server_port << "..." << endl;
     
+    // 打印地址信息
+    struct sockaddr_in *local = (struct sockaddr_in*)&g_local_addr;
+    struct sockaddr_in *peer = (struct sockaddr_in*)&g_peer_addr;
+    char local_str[INET_ADDRSTRLEN], peer_str[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &local->sin_addr, local_str, sizeof(local_str));
+    inet_ntop(AF_INET, &peer->sin_addr, peer_str, sizeof(peer_str));
+    cout << "[DEBUG] Local: " << local_str << ":" << ntohs(local->sin_port) << endl;
+    cout << "[DEBUG] Peer: " << peer_str << ":" << ntohs(peer->sin_port) << endl;
+    
     g_conn = lsquic_engine_connect(
         g_engine,
         N_LSQVER,
@@ -391,7 +409,9 @@ static bool connect_to_server() {
         return false;
     }
     
+    cout << "[DEBUG] Connection object created, processing..." << endl;
     lsquic_engine_process_conns(g_engine);
+    cout << "[DEBUG] After process_conns, packets_sent=" << g_packets_sent << endl;
     
     return true;
 }

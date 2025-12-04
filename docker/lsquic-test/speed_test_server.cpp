@@ -95,12 +95,22 @@ void print_stats() {
 }
 
 
+// 握手完成回调
+static void on_hsk_done(lsquic_conn_t *conn, enum lsquic_hsk_status status) {
+    cout << "[Server] Handshake done, status=" << (int)status << endl;
+    if (status == LSQ_HSK_OK || status == LSQ_HSK_RESUMED_OK) {
+        cout << "[Server] Handshake successful!" << endl;
+    } else {
+        cout << "[Server] Handshake failed!" << endl;
+    }
+}
+
 // lsquic 回调函数
 static lsquic_conn_ctx_t* on_new_conn(void *stream_if_ctx, lsquic_conn_t *conn) {
     g_connections++;
     g_session_bytes = 0;
     g_session_start = steady_clock::now();
-    cout << "\n[Server] New connection! Total: " << g_connections << endl;
+    cout << "\n[Server] New connection object created! Total: " << g_connections << endl;
     return nullptr;
 }
 
@@ -151,6 +161,7 @@ static const struct lsquic_stream_if stream_if = {
     .on_read = on_read,
     .on_write = on_write,
     .on_close = on_close,
+    .on_hsk_done = on_hsk_done,
 };
 
 // SSL 回调

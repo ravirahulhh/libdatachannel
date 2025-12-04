@@ -172,7 +172,7 @@ main() {
     
     case $cmd in
         build)
-            build_image
+            build_image "$@"
             ;;
         server)
             start_server "$@"
