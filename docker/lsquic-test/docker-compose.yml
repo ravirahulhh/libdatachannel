@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  server:
+    build: .
+    container_name: lsquic-server
+    network_mode: host
+    command: >
+      bash -c "
+        cd /app &&
+        openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj '/CN=localhost' 2>/dev/null &&
+        ./build/speed_test_server
+      "
+    restart: unless-stopped
+
+  client:
+    build: .
+    container_name: lsquic-client
+    network_mode: host
+    depends_on:
+      - server
+    environment:
+      - SERVER_ADDR=${SERVER_ADDR:-127.0.0.1}
+      - DATA_SIZE_GB=${DATA_SIZE_GB:-1}
+    command: >
+      bash -c "
+        sleep 3 &&
+        /app/build/speed_test_client -s $${SERVER_ADDR} -g $${DATA_SIZE_GB}
+      "
