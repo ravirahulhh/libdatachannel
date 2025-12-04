@@ -14,19 +14,33 @@ include_directories(
     ${BORINGSSL_DIR}/include
 )
 
-# 库文件路径
-link_directories(
-    ${LSQUIC_DIR}/src/liblsquic
-    ${BORINGSSL_DIR}/ssl
-    ${BORINGSSL_DIR}/crypto
-)
+# 查找 lsquic 库
+find_library(LSQUIC_LIB lsquic PATHS ${LSQUIC_DIR}/src/liblsquic NO_DEFAULT_PATH)
+if(NOT LSQUIC_LIB)
+    set(LSQUIC_LIB ${LSQUIC_DIR}/src/liblsquic/liblsquic.a)
+endif()
+
+# 查找 BoringSSL 库
+find_library(SSL_LIB ssl PATHS ${BORINGSSL_DIR}/ssl NO_DEFAULT_PATH)
+if(NOT SSL_LIB)
+    set(SSL_LIB ${BORINGSSL_DIR}/ssl/libssl.a)
+endif()
+
+find_library(CRYPTO_LIB crypto PATHS ${BORINGSSL_DIR}/crypto NO_DEFAULT_PATH)
+if(NOT CRYPTO_LIB)
+    set(CRYPTO_LIB ${BORINGSSL_DIR}/crypto/libcrypto.a)
+endif()
+
+message(STATUS "LSQUIC_LIB: ${LSQUIC_LIB}")
+message(STATUS "SSL_LIB: ${SSL_LIB}")
+message(STATUS "CRYPTO_LIB: ${CRYPTO_LIB}")
 
 # 编译服务端
 add_executable(speed_test_server speed_test_server.cpp)
 target_link_libraries(speed_test_server
-    lsquic
-    ssl
-    crypto
+    ${LSQUIC_LIB}
+    ${SSL_LIB}
+    ${CRYPTO_LIB}
     event
     z
     pthread
@@ -36,9 +50,9 @@ target_link_libraries(speed_test_server
 # 编译客户端
 add_executable(speed_test_client speed_test_client.cpp)
 target_link_libraries(speed_test_client
-    lsquic
-    ssl
-    crypto
+    ${LSQUIC_LIB}
+    ${SSL_LIB}
+    ${CRYPTO_LIB}
     event
     z
     pthread

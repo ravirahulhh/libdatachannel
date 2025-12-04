@@ -17,6 +17,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <event2/event.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 
 extern "C" {
 #include <lsquic.h>
