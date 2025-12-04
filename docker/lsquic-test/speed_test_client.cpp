@@ -324,6 +324,10 @@ static bool init_socket() {
 
 // SSL 回调 - 客户端也需要提供 SSL_CTX
 static SSL_CTX* get_ssl_ctx(void *peer_ctx, const struct sockaddr *local) {
+    cout << "[DEBUG] get_ssl_ctx called" << endl;
+    if (!g_ssl_ctx) {
+        cerr << "[ERROR] g_ssl_ctx is NULL!" << endl;
+    }
     return g_ssl_ctx;
 }
 
@@ -332,15 +336,28 @@ static bool init_ssl() {
     g_ssl_ctx = SSL_CTX_new(TLS_client_method());
     if (!g_ssl_ctx) {
         cerr << "Failed to create SSL context" << endl;
+        ERR_print_errors_fp(stderr);
         return false;
     }
+    
+    cout << "[DEBUG] SSL_CTX created" << endl;
     
     // 客户端不验证服务器证书 (测试用)
     SSL_CTX_set_verify(g_ssl_ctx, SSL_VERIFY_NONE, nullptr);
     
     // 设置最小 TLS 版本为 1.3 (QUIC 要求)
-    SSL_CTX_set_min_proto_version(g_ssl_ctx, TLS1_3_VERSION);
-    SSL_CTX_set_max_proto_version(g_ssl_ctx, TLS1_3_VERSION);
+    if (!SSL_CTX_set_min_proto_version(g_ssl_ctx, TLS1_3_VERSION)) {
+        cerr << "Failed to set min TLS version" << endl;
+        ERR_print_errors_fp(stderr);
+        return false;
+    }
+    if (!SSL_CTX_set_max_proto_version(g_ssl_ctx, TLS1_3_VERSION)) {
+        cerr << "Failed to set max TLS version" << endl;
+        ERR_print_errors_fp(stderr);
+        return false;
+    }
+    
+    cout << "[DEBUG] SSL_CTX configured for TLS 1.3" << endl;
     
     return true;
 }
@@ -446,7 +463,7 @@ void print_usage(const char* prog) {
 
 int main(int argc, char *argv[]) {
     // 启用 lsquic 日志 (用于调试)
-    // setenv("LSQUIC_LOG_LEVEL", "debug", 1);
+    setenv("LSQUIC_LOG_LEVEL", "debug", 1);
     
     // 解析命令行参数
     for (int i = 1; i < argc; i++) {
