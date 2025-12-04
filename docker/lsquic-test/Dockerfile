@@ -61,9 +61,9 @@ RUN git clone --recursive https://github.com/litespeedtech/lsquic.git && \
           . && \
     make -j$(nproc)
 
-# 验证编译产物
-RUN ls -la /src/boringssl/build/ssl/ && \
-    ls -la /src/boringssl/build/crypto/ && \
+# 查找 BoringSSL 编译产物位置
+RUN find /src/boringssl -name "libssl.a" -o -name "libcrypto.a" 2>/dev/null || true && \
+    ls -la /src/boringssl/build/ && \
     ls -la /src/lsquic/src/liblsquic/
 
 # 复制测试程序源码
