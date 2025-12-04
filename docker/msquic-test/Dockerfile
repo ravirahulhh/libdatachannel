@@ -56,7 +56,7 @@ RUN mkdir build && cd build && \
     cmake --build . -j$(nproc)
 
 # 暴露 QUIC 端口 (UDP)
-EXPOSE 4433/udp
+EXPOSE 9331/udp
 
 # 默认命令
 CMD ["/bin/bash"]

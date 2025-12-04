@@ -30,7 +30,7 @@ mutex StatsMutex;
 
 // 配置
 const char* ALPN = "speedtest";
-const uint16_t PORT = 4433;
+const uint16_t PORT = 9331;
 
 // 证书配置 (自签名)
 QUIC_CREDENTIAL_CONFIG CredConfig;

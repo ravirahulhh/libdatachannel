@@ -45,7 +45,7 @@ MsQuic 速度测试部署脚本
 选项:
   -s <address>    服务器地址 (客户端模式)
   -g <size>       发送数据大小 (GB), 默认 1
-  -p <port>       端口号, 默认 4433
+  -p <port>       端口号, 默认 9331
 
 EOF
 }
@@ -59,7 +59,7 @@ build_image() {
 
 # 启动服务端
 start_server() {
-    local port=${1:-4433}
+    local port=${1:-9331}
     
     print_info "启动 MsQuic 服务端 (端口: $port)..."
     
@@ -87,7 +87,7 @@ start_server() {
 start_client() {
     local server_addr=""
     local data_size=1
-    local port=4433
+    local port=9331
     
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -100,7 +100,7 @@ start_client() {
     
     if [ -z "$server_addr" ]; then
         print_error "请指定服务器地址: $0 client -s <server_ip> -p <port> -g <size_gb>"
-        print_error "示例: $0 client -s 192.168.1.100 -p 4433 -g 5"
+        print_error "示例: $0 client -s 192.168.1.100 -p 9331 -g 5"
         exit 1
     fi
     
