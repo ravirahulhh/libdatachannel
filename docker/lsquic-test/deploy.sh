@@ -52,9 +52,15 @@ EOF
 
 # 构建镜像
 build_image() {
-    print_info "构建 lsquic 测试镜像..."
+    local no_cache=""
+    if [[ "$1" == "--no-cache" ]]; then
+        no_cache="--no-cache"
+        print_info "构建 lsquic 测试镜像 (无缓存)..."
+    else
+        print_info "构建 lsquic 测试镜像..."
+    fi
     print_info "这可能需要 10-20 分钟 (编译 BoringSSL 和 lsquic)..."
-    docker build -t lsquic-speed-test:latest .
+    docker build $no_cache -t lsquic-speed-test:latest .
     print_info "镜像构建完成!"
 }
 
