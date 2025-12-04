@@ -61,6 +61,10 @@ static vector<uint8_t> g_send_buffer;
 static uint64_t g_total_to_send = 0;
 static uint64_t g_sent = 0;
 
+// 调试计数器
+static atomic<uint64_t> g_packets_sent{0};
+static atomic<uint64_t> g_packets_recv{0};
+
 // 打印统计信息
 // 注意: lsquic 不提供实时的 ACK 统计 API，我们只能跟踪写入缓冲区的字节数
 // 流关闭时表示所有数据已被确认
@@ -92,17 +96,11 @@ static lsquic_conn_ctx_t* on_new_conn(void *stream_if_ctx, lsquic_conn_t *conn) 
     g_connected = true;
     g_start_time = steady_clock::now();
     
-    // 检查连接状态
-    enum lsquic_conn_status status = lsquic_conn_status(conn, nullptr, 0);
-    cout << "\n[Client] on_new_conn called, status=" << status << endl;
+    cout << "\n[Client] on_new_conn called" << endl;
+    cout << "[Client] Connected to server!" << endl;
     
-    if (status == LSCONN_ST_CONNECTED || status == LSCONN_ST_HANDSHAKE_IN_PROGRESS) {
-        cout << "[Client] Connected to server!" << endl;
-        // 创建流
-        lsquic_conn_make_stream(conn);
-    } else {
-        cout << "[Client] Connection not ready yet, status=" << status << endl;
-    }
+    // 创建流
+    lsquic_conn_make_stream(conn);
     
     return nullptr;
 }
@@ -213,10 +211,6 @@ static int send_packets(void *ctx, const struct lsquic_out_spec *specs, unsigned
     
     return n_sent;
 }
-
-// 调试计数器
-static atomic<uint64_t> g_packets_sent{0};
-static atomic<uint64_t> g_packets_recv{0};
 
 // 处理接收的数据包
 static void read_socket(evutil_socket_t fd, short what, void *arg) {
