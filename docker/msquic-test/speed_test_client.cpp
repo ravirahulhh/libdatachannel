@@ -31,8 +31,8 @@ steady_clock::time_point StartTime;
 
 // 配置
 const char* ALPN = "speedtest";
-const uint16_t PORT = 4433;
 string ServerAddress = "127.0.0.1";
+uint16_t ServerPort = 4433;
 uint64_t DataSizeGB = 1; // 默认发送 1GB 数据
 uint32_t BufferSize = 64 * 1024; // 64KB 缓冲区
 
@@ -268,8 +268,6 @@ void PrintUsage(const char* prog) {
     cout << "  -b <size>     Buffer size in KB (default: 64)" << endl;
     cout << "  -h            Show this help" << endl;
 }
-
-uint16_t ServerPort = 4433;
 
 int main(int argc, char* argv[]) {
     // 解析命令行参数
