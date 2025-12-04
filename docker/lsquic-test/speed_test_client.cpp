@@ -322,6 +322,11 @@ static bool init_socket() {
     return true;
 }
 
+// SSL 回调 - 客户端也需要提供 SSL_CTX
+static SSL_CTX* get_ssl_ctx(void *peer_ctx, const struct sockaddr *local) {
+    return g_ssl_ctx;
+}
+
 // 初始化 SSL (客户端模式)
 static bool init_ssl() {
     g_ssl_ctx = SSL_CTX_new(TLS_client_method());
@@ -354,6 +359,9 @@ static bool init_engine() {
     lsquic_engine_init_settings(&settings, 0);  // Client mode
     settings.es_max_streams_in = 100;
     settings.es_idle_timeout = 60;
+    settings.es_versions = LSQUIC_DF_VERSIONS;  // 使用默认支持的 QUIC 版本
+    
+    cout << "[DEBUG] QUIC versions: 0x" << hex << settings.es_versions << dec << endl;
     
     // 验证设置
     char errbuf[256];
@@ -367,13 +375,15 @@ static bool init_engine() {
     api.ea_stream_if_ctx = nullptr;
     api.ea_packets_out = send_packets;
     api.ea_packets_out_ctx = nullptr;
-    // 客户端不需要 ea_get_ssl_ctx，lsquic 会自动处理
+    api.ea_get_ssl_ctx = get_ssl_ctx;  // 客户端也需要 SSL 回调
     
     g_engine = lsquic_engine_new(0, &api);  // Client mode (0 = client)
     if (!g_engine) {
         cerr << "Failed to create lsquic engine" << endl;
         return false;
     }
+    
+    cout << "[DEBUG] lsquic engine created successfully" << endl;
     
     return true;
 }
@@ -435,6 +445,9 @@ void print_usage(const char* prog) {
 }
 
 int main(int argc, char *argv[]) {
+    // 启用 lsquic 日志 (用于调试)
+    // setenv("LSQUIC_LOG_LEVEL", "debug", 1);
+    
     // 解析命令行参数
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
