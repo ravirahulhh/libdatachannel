@@ -39,12 +39,12 @@ echo "4. 查看服务器日志 (前 20 行):"
 docker logs lsquic-server | head -20
 
 echo ""
-echo "5. 启动客户端 (发送 100MB 数据)..."
+echo "5. 启动客户端 (发送 10MB 数据)..."
 docker run -it --rm \
     --name lsquic-client \
     --network host \
     lsquic-speed-test:latest \
-    /app/build/speed_test_client -s 127.0.0.1 -g 0.1
+    /app/build/speed_test_client -s 127.0.0.1 -g 0.01
 
 echo ""
 echo "6. 查看服务器最终日志:"

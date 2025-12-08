@@ -201,26 +201,40 @@ static void read_socket(evutil_socket_t fd, short what, void *arg) {
     struct sockaddr_storage peer_addr;
     socklen_t peer_addr_len = sizeof(peer_addr);
     
-    ssize_t nr = recvfrom(fd, buf, sizeof(buf), 0, 
-                          (struct sockaddr*)&peer_addr, &peer_addr_len);
-    
-    if (nr > 0) {
-        g_udp_packets++;
-        if (g_udp_packets <= 5) {
-            char addr_str[INET_ADDRSTRLEN];
-            struct sockaddr_in *sin = (struct sockaddr_in*)&peer_addr;
-            inet_ntop(AF_INET, &sin->sin_addr, addr_str, sizeof(addr_str));
-            cout << "\n[DEBUG] Received UDP packet #" << g_udp_packets 
-                 << " from " << addr_str << ":" << ntohs(sin->sin_port)
-                 << " size=" << nr << " bytes" << endl;
+    // 循环读取所有可用的数据包
+    while (true) {
+        ssize_t nr = recvfrom(fd, buf, sizeof(buf), 0, 
+                              (struct sockaddr*)&peer_addr, &peer_addr_len);
+        
+        if (nr < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // 没有更多数据
+                break;
+            }
+            if (g_udp_packets < 5) {
+                cerr << "[DEBUG] recvfrom error: " << strerror(errno) << endl;
+            }
+            break;
         }
         
-        int ret = lsquic_engine_packet_in(g_engine, buf, nr,
-                                          (struct sockaddr*)&g_local_addr,
-                                          (struct sockaddr*)&peer_addr,
-                                          nullptr, 0);
-        if (ret != 0 && g_udp_packets <= 5) {
-            cout << "[DEBUG] lsquic_engine_packet_in returned: " << ret << endl;
+        if (nr > 0) {
+            g_udp_packets++;
+            if (g_udp_packets <= 10) {
+                char addr_str[INET_ADDRSTRLEN];
+                struct sockaddr_in *sin = (struct sockaddr_in*)&peer_addr;
+                inet_ntop(AF_INET, &sin->sin_addr, addr_str, sizeof(addr_str));
+                cout << "\n[DEBUG] Received UDP packet #" << g_udp_packets 
+                     << " from " << addr_str << ":" << ntohs(sin->sin_port)
+                     << " size=" << nr << " bytes" << endl;
+            }
+            
+            int ret = lsquic_engine_packet_in(g_engine, buf, nr,
+                                              (struct sockaddr*)&g_local_addr,
+                                              (struct sockaddr*)&peer_addr,
+                                              nullptr, 0);
+            if (ret != 0 && g_udp_packets <= 10) {
+                cout << "[DEBUG] lsquic_engine_packet_in returned: " << ret << endl;
+            }
         }
     }
     
@@ -424,6 +438,9 @@ int main(int argc, char *argv[]) {
     event_add(g_socket_event, nullptr);
     
     g_timer_event = evtimer_new(g_event_base, timer_handler, nullptr);
+    // 启动定时器
+    struct timeval tv = {0, 1000};
+    event_add(g_timer_event, &tv);
     
     cout << "Server started successfully. Waiting for connections..." << endl;
     cout << "Press Ctrl+C to stop\n" << endl;

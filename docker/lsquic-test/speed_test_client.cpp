@@ -53,7 +53,7 @@ static steady_clock::time_point g_start_time;
 // 配置
 static string g_server_addr = "127.0.0.1";
 static uint16_t g_server_port = 9331;
-static uint64_t g_data_size_gb = 1;
+static double g_data_size_gb = 1.0;  // 改为 double 支持小数
 static uint32_t g_buffer_size = 64 * 1024;
 
 // 发送缓冲区
@@ -121,7 +121,8 @@ static void on_conn_closed(lsquic_conn_t *conn) {
 static lsquic_stream_ctx_t* on_new_stream(void *stream_if_ctx, lsquic_stream_t *stream) {
     g_stream = stream;
     lsquic_stream_wantwrite(stream, 1);
-    cout << "[Client] Stream created, starting data transfer: " << g_data_size_gb << " GB" << endl;
+    cout << "[Client] Stream created, starting data transfer: " << fixed << setprecision(2) 
+         << g_data_size_gb << " GB (" << (g_total_to_send / (1024.0 * 1024.0)) << " MB)" << endl;
     return nullptr;
 }
 
@@ -227,21 +228,35 @@ static void read_socket(evutil_socket_t fd, short what, void *arg) {
     struct sockaddr_storage peer_addr;
     socklen_t peer_addr_len = sizeof(peer_addr);
     
-    ssize_t nr = recvfrom(fd, buf, sizeof(buf), 0, 
-                          (struct sockaddr*)&peer_addr, &peer_addr_len);
-    
-    if (nr > 0) {
-        g_packets_recv++;
-        if (g_packets_recv <= 10) {
-            cout << "[DEBUG] Received packet #" << g_packets_recv << " size=" << nr << endl;
+    // 循环读取所有可用的数据包
+    while (true) {
+        ssize_t nr = recvfrom(fd, buf, sizeof(buf), 0, 
+                              (struct sockaddr*)&peer_addr, &peer_addr_len);
+        
+        if (nr < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // 没有更多数据
+                break;
+            }
+            if (g_packets_recv < 5) {
+                cerr << "[DEBUG] recvfrom error: " << strerror(errno) << endl;
+            }
+            break;
         }
         
-        int ret = lsquic_engine_packet_in(g_engine, buf, nr,
-                                (struct sockaddr*)&g_local_addr,
-                                (struct sockaddr*)&peer_addr,
-                                nullptr, 0);
-        if (ret != 0 && g_packets_recv <= 10) {
-            cout << "[DEBUG] packet_in returned: " << ret << endl;
+        if (nr > 0) {
+            g_packets_recv++;
+            if (g_packets_recv <= 10) {
+                cout << "[DEBUG] Received packet #" << g_packets_recv << " size=" << nr << endl;
+            }
+            
+            int ret = lsquic_engine_packet_in(g_engine, buf, nr,
+                                    (struct sockaddr*)&g_local_addr,
+                                    (struct sockaddr*)&peer_addr,
+                                    nullptr, 0);
+            if (ret != 0 && g_packets_recv <= 10) {
+                cout << "[DEBUG] packet_in returned: " << ret << endl;
+            }
         }
     }
     
@@ -254,6 +269,23 @@ static void read_socket(evutil_socket_t fd, short what, void *arg) {
 }
 
 static void timer_handler(evutil_socket_t fd, short what, void *arg) {
+    static int tick_count = 0;
+    static int no_response_count = 0;
+    
+    tick_count++;
+    
+    // 检查连接超时 (10秒没有收到响应)
+    if (!g_connected && tick_count > 10000 && g_packets_recv == 0) {
+        no_response_count++;
+        if (no_response_count > 5) {
+            cerr << "\n[ERROR] Connection timeout: no response from server after 10 seconds" << endl;
+            cerr << "[DEBUG] Packets sent: " << g_packets_sent << ", received: " << g_packets_recv << endl;
+            g_running = false;
+            event_base_loopbreak(g_event_base);
+            return;
+        }
+    }
+    
     lsquic_engine_process_conns(g_engine);
     
     if (lsquic_engine_earliest_adv_tick(g_engine, nullptr)) {
@@ -491,7 +523,7 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) {
             g_server_port = atoi(argv[++i]);
         } else if (strcmp(argv[i], "-g") == 0 && i + 1 < argc) {
-            g_data_size_gb = atoi(argv[++i]);
+            g_data_size_gb = atof(argv[++i]);  // 使用 atof 支持小数
         } else if (strcmp(argv[i], "-b") == 0 && i + 1 < argc) {
             g_buffer_size = atoi(argv[++i]) * 1024;
         } else if (strcmp(argv[i], "-h") == 0) {
@@ -502,7 +534,7 @@ int main(int argc, char *argv[]) {
     
     cout << "=== lsquic Speed Test Client ===" << endl;
     cout << "Server: " << g_server_addr << ":" << g_server_port << endl;
-    cout << "Data size: " << g_data_size_gb << " GB" << endl;
+    cout << "Data size: " << fixed << setprecision(2) << g_data_size_gb << " GB" << endl;
     cout << "Buffer size: " << (g_buffer_size / 1024) << " KB" << endl;
     
     signal(SIGINT, signal_handler);
@@ -510,7 +542,14 @@ int main(int argc, char *argv[]) {
     
     // 初始化发送缓冲区
     g_send_buffer.resize(g_buffer_size, 'X');
-    g_total_to_send = g_data_size_gb * 1024ULL * 1024ULL * 1024ULL;
+    g_total_to_send = (uint64_t)(g_data_size_gb * 1024.0 * 1024.0 * 1024.0);
+    
+    if (g_total_to_send == 0) {
+        cerr << "Error: Data size must be greater than 0" << endl;
+        return 1;
+    }
+    
+    cout << "Total to send: " << (g_total_to_send / (1024.0 * 1024.0)) << " MB" << endl;
     
     if (!init_ssl()) {
         return 1;
