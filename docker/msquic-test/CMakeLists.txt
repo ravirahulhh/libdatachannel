@@ -9,6 +9,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_library(MSQUIC_LIB msquic REQUIRED)
 find_path(MSQUIC_INCLUDE msquic.h PATH_SUFFIXES msquic REQUIRED)
 
+# 启用预览功能以支持BBR
+add_definitions(-DQUIC_API_ENABLE_PREVIEW_FEATURES)
+
 # 服务端
 add_executable(speed_test_server speed_test_server.cpp)
 target_include_directories(speed_test_server PRIVATE ${MSQUIC_INCLUDE})

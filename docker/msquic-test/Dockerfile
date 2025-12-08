@@ -30,7 +30,7 @@ RUN apt-get update && apt-get install -y \
 # 设置工作目录
 WORKDIR /opt
 
-# 克隆并编译 msquic
+# 克隆并编译 msquic (启用预览功能以支持BBR)
 RUN git clone --recursive https://github.com/microsoft/msquic.git && \
     cd msquic && \
     mkdir build && cd build && \
@@ -39,6 +39,7 @@ RUN git clone --recursive https://github.com/microsoft/msquic.git && \
         -DQUIC_BUILD_TOOLS=ON \
         -DQUIC_BUILD_TEST=OFF \
         -DQUIC_BUILD_PERF=ON \
+        -DQUIC_ENABLE_PREVIEW_FEATURES=ON \
         .. && \
     cmake --build . --config Release -j$(nproc) && \
     cmake --install . && \

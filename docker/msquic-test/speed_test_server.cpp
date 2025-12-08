@@ -124,17 +124,18 @@ QUIC_STATUS QUIC_API ConnectionCallback(HQUIC Connection, void* Context, QUIC_CO
             HasActiveSession = true;
             
             // 设置拥塞控制算法
-            uint16_t ccAlgo;
+            QUIC_SETTINGS settings = {};
             if (CongestionAlgorithm == "bbr") {
-                ccAlgo = QUIC_CONGESTION_CONTROL_ALGORITHM_BBR;
+                settings.CongestionControlAlgorithm = QUIC_CONGESTION_CONTROL_ALGORITHM_BBR;
                 cout << "\n[Server] Client connected! Using BBR congestion control" << endl;
             } else {
-                ccAlgo = QUIC_CONGESTION_CONTROL_ALGORITHM_CUBIC;
+                settings.CongestionControlAlgorithm = QUIC_CONGESTION_CONTROL_ALGORITHM_CUBIC;
                 cout << "\n[Server] Client connected! Using CUBIC congestion control" << endl;
             }
+            settings.IsSet.CongestionControlAlgorithm = TRUE;
             
-            MsQuic->SetParam(Connection, QUIC_PARAM_CONN_CONGESTION_CONTROL_ALGORITHM,
-                           sizeof(ccAlgo), &ccAlgo);
+            MsQuic->SetParam(Connection, QUIC_PARAM_CONN_SETTINGS,
+                           sizeof(settings), &settings);
             
             cout << "[Server] Active: " << ActiveConnections << ", Total: " << TotalConnections << endl;
             MsQuic->ConnectionSendResumptionTicket(Connection, QUIC_SEND_RESUMPTION_FLAG_NONE, 0, nullptr);
