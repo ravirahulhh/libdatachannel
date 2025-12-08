@@ -333,7 +333,7 @@ static SSL_CTX* get_ssl_ctx(void *peer_ctx, const struct sockaddr *local) {
 
 // 初始化 SSL (客户端模式)
 static bool init_ssl() {
-    g_ssl_ctx = SSL_CTX_new(TLS_client_method());
+    g_ssl_ctx = SSL_CTX_new(TLS_method());  // 使用通用方法
     if (!g_ssl_ctx) {
         cerr << "Failed to create SSL context" << endl;
         ERR_print_errors_fp(stderr);
@@ -345,7 +345,7 @@ static bool init_ssl() {
     // 客户端不验证服务器证书 (测试用)
     SSL_CTX_set_verify(g_ssl_ctx, SSL_VERIFY_NONE, nullptr);
     
-    // 设置最小 TLS 版本为 1.3 (QUIC 要求)
+    // 设置 TLS 1.3 (QUIC 要求)
     if (!SSL_CTX_set_min_proto_version(g_ssl_ctx, TLS1_3_VERSION)) {
         cerr << "Failed to set min TLS version" << endl;
         ERR_print_errors_fp(stderr);
@@ -357,7 +357,15 @@ static bool init_ssl() {
         return false;
     }
     
-    cout << "[DEBUG] SSL_CTX configured for TLS 1.3" << endl;
+    // 设置 ALPN (应用层协议协商)
+    const unsigned char alpn[] = "\x09speedtest";  // 长度前缀 + "speedtest"
+    if (SSL_CTX_set_alpn_protos(g_ssl_ctx, alpn, sizeof(alpn) - 1) != 0) {
+        cerr << "Failed to set ALPN" << endl;
+        ERR_print_errors_fp(stderr);
+        return false;
+    }
+    
+    cout << "[DEBUG] SSL_CTX configured for TLS 1.3 with ALPN" << endl;
     
     return true;
 }
@@ -370,10 +378,10 @@ static int log_buf(void *ctx, const char *buf, size_t len) {
 
 // 初始化 lsquic 引擎
 static bool init_engine() {
-    // 设置 lsquic 日志
+    // 设置 lsquic 日志 - 使用更详细的日志级别
     struct lsquic_logger_if logger_if = { .log_buf = log_buf };
     lsquic_logger_init(&logger_if, nullptr, LLTS_HHMMSSMS);
-    lsquic_set_log_level("debug");
+    lsquic_set_log_level("event=debug,engine=debug,conn=debug,stream=debug");
     
     if (lsquic_global_init(LSQUIC_GLOBAL_CLIENT) != 0) {
         cerr << "Failed to initialize lsquic" << endl;
@@ -387,7 +395,8 @@ static bool init_engine() {
     lsquic_engine_init_settings(&settings, 0);  // Client mode
     settings.es_max_streams_in = 100;
     settings.es_idle_timeout = 60;
-    settings.es_versions = LSQUIC_DF_VERSIONS;  // 使用默认支持的 QUIC 版本
+    // 明确使用 IETF QUIC v1 (与服务器匹配)
+    settings.es_versions = (1 << LSQVER_I001);
     
     cout << "[DEBUG] QUIC versions: 0x" << hex << settings.es_versions << dec << endl;
     
@@ -429,11 +438,10 @@ static bool connect_to_server() {
     cout << "[DEBUG] Local: " << local_str << ":" << ntohs(local->sin_port) << endl;
     cout << "[DEBUG] Peer: " << peer_str << ":" << ntohs(peer->sin_port) << endl;
     
-    // 注意：peer_ctx 应该传递给 get_ssl_ctx，这里传 nullptr 可能有问题
-    // 尝试传递一个有效的上下文
+    // 使用与服务器相同的 QUIC 版本
     g_conn = lsquic_engine_connect(
         g_engine,
-        N_LSQVER,
+        LSQVER_I001,          // 使用 IETF QUIC v1 (RFC 9000)
         (struct sockaddr*)&g_local_addr,
         (struct sockaddr*)&g_peer_addr,
         (void*)&g_peer_addr,  // peer_ctx - 传递对端地址作为上下文

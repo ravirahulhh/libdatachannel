@@ -1,168 +1,114 @@
-# lsquic 传输速度测试
+# lsquic 速度测试
 
-使用 Docker 在两台 Linux 服务器之间测试 lsquic QUIC 协议的传输速度。
+## 问题诊断
 
-## 快速开始
+### 原始问题
+客户端连接服务器后立即退出，没有数据传输。日志显示：
+- 客户端发送了数据包但没有收到服务器响应
+- 握手没有完成
 
-### 方式一：使用部署脚本 (推荐)
+### 根本原因
+1. **QUIC 版本不匹配**：客户端使用 `N_LSQVER`（未定义），服务器使用默认版本
+2. **ALPN 协议协商缺失**：客户端和服务器没有正确配置 ALPN
+3. **SSL 上下文配置问题**：使用了特定的 TLS 方法而不是通用方法
 
+### 修复方案
+1. **统一 QUIC 版本**：客户端和服务器都使用 `LSQVER_I001` (IETF QUIC v1 / RFC 9000)
+2. **添加 ALPN 支持**：
+   - 客户端：使用 `SSL_CTX_set_alpn_protos` 设置 "speedtest"
+   - 服务器：使用 `SSL_CTX_set_alpn_select_cb` 处理 ALPN 选择
+3. **改进 SSL 配置**：使用 `TLS_method()` 而不是 `TLS_client_method()` / `TLS_server_method()`
+4. **增强日志**：添加更详细的调试日志以便诊断问题
+
+## 使用方法
+
+### 1. 构建镜像
 ```bash
-# 添加执行权限
-chmod +x deploy.sh
-
-# 1. 在服务器 A (接收端) 上
-./deploy.sh build      # 首次构建需要 10-20 分钟
-./deploy.sh server
-
-# 2. 在服务器 B (发送端) 上
 ./deploy.sh build
-./deploy.sh client -s <服务器A的IP> -g 5  # 发送 5GB 数据
 ```
 
-### 方式二：使用 Docker Compose (本地测试)
-
+### 2. 在服务器 A 上启动服务端
 ```bash
-# 本地测试 (同一台机器)
-docker-compose up --build
-
-# 或指定数据量
-DATA_SIZE_GB=5 docker-compose up --build
+./deploy.sh server
 ```
 
-### 方式三：手动 Docker 命令
-
+### 3. 在服务器 B 上启动客户端
 ```bash
-# 构建镜像
-docker build -t lsquic-speed-test:latest .
-
-# 服务器 A - 启动服务端
-docker run -d --name lsquic-server --network host \
-    lsquic-speed-test:latest \
-    bash -c "cd /app && \
-        openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj '/CN=localhost' && \
-        ./build/speed_test_server"
-
-# 服务器 B - 启动客户端
-docker run -it --rm --network host \
-    lsquic-speed-test:latest \
-    /app/build/speed_test_client -s <服务器A的IP> -g 1
+./deploy.sh client -s <服务器A的IP> -g 5
 ```
 
-## 命令行参数
-
-### 服务端
-服务端默认监听 UDP 9331 端口，无需额外参数。
-
-### 客户端
-```
--s <address>  服务器地址 (必需)
--p <port>     服务器端口, 默认 9331
--g <size>     发送数据大小 (GB), 默认 1
--b <size>     缓冲区大小 (KB), 默认 64
--h            显示帮助
-```
-
-## 防火墙配置
-
-确保服务器 A 开放 UDP 9331 端口：
-
+### 4. 本地测试
 ```bash
-# Ubuntu/Debian (ufw)
+./deploy.sh local-test
+```
+
+## 调试技巧
+
+### 查看服务器日志
+```bash
+docker logs -f lsquic-server
+```
+
+### 查看客户端日志
+客户端以交互模式运行，直接在终端查看输出
+
+### 网络检查
+```bash
+# 检查 UDP 端口是否开放
+nc -u -v <服务器IP> 9331
+
+# 使用 tcpdump 抓包
+tcpdump -i any -n udp port 9331
+```
+
+### 防火墙配置
+确保 UDP 端口 9331 开放：
+```bash
+# Ubuntu/Debian
 sudo ufw allow 9331/udp
 
-# CentOS/RHEL (firewalld)
+# CentOS/RHEL
 sudo firewall-cmd --add-port=9331/udp --permanent
 sudo firewall-cmd --reload
-
-# iptables
-sudo iptables -A INPUT -p udp --dport 9331 -j ACCEPT
 ```
 
-## 测试结果示例
+## 与 msquic 的对比
 
-```
-=== lsquic Speed Test Client ===
-Server: 192.168.1.100:9331
-Data size: 5 GB
-Buffer size: 64 KB
+| 特性 | lsquic | msquic |
+|------|--------|--------|
+| QUIC 实现 | LiteSpeed QUIC | Microsoft QUIC |
+| TLS 库 | BoringSSL | OpenSSL/Schannel |
+| 版本支持 | IETF QUIC v1 | IETF QUIC v1 |
+| 配置复杂度 | 较高 | 较低 |
+| 文档质量 | 一般 | 较好 |
 
-[Client] Connecting to 192.168.1.100:9331...
-[Client] Connected to server!
-[Client] Stream created, starting data transfer: 5 GB
-[Client] Sent: 5120.00 MB | Speed: 856.32 Mbps | Progress: 100.00%
+## 常见问题
 
-=== Transfer Complete ===
-Total sent: 5.00 GB
-Time: 47.82 seconds
-Average speed: 856.32 Mbps
-```
+### Q: 客户端连接后立即退出
+A: 检查 QUIC 版本是否匹配，ALPN 是否正确配置
+
+### Q: 服务器没有收到数据包
+A: 检查防火墙和网络配置，确保 UDP 端口开放
+
+### Q: 握手失败
+A: 检查 SSL 证书是否正确生成，TLS 版本是否为 1.3
+
+### Q: 编译失败
+A: 确保 BoringSSL 和 lsquic 正确编译，检查库文件路径
 
 ## 性能优化建议
 
-1. **网络配置**
+1. **增大缓冲区**：`-b 128` (128KB)
+2. **调整拥塞控制**：lsquic 支持 BBR 和 Cubic
+3. **优化网络参数**：
    ```bash
-   # 增加 UDP 缓冲区
-   sudo sysctl -w net.core.rmem_max=26214400
-   sudo sysctl -w net.core.wmem_max=26214400
-   sudo sysctl -w net.core.rmem_default=26214400
-   sudo sysctl -w net.core.wmem_default=26214400
+   # 增大 UDP 缓冲区
+   sysctl -w net.core.rmem_max=26214400
+   sysctl -w net.core.wmem_max=26214400
    ```
 
-2. **Docker 网络模式**
-   - 使用 `--network host` 获得最佳性能
-   - 避免使用 bridge 网络模式
+## 参考资料
 
-3. **CPU 亲和性**
-   ```bash
-   docker run --cpuset-cpus="0-3" ...
-   ```
-
-## lsquic vs msquic 对比测试
-
-如果你想对比两种 QUIC 实现的性能，可以：
-
-```bash
-# 测试 lsquic
-cd docker/lsquic-test
-./deploy.sh local-test 5
-
-# 测试 msquic
-cd docker/msquic-test
-./deploy.sh local-test 5
-```
-
-## 故障排除
-
-### 连接失败
-- 检查防火墙是否开放 UDP 9331
-- 确认服务端已启动: `docker logs lsquic-server`
-- 测试 UDP 连通性: `nc -vzu <server_ip> 9331`
-
-### 构建失败
-- 确保有足够的磁盘空间 (至少 5GB)
-- 确保网络可以访问 GitHub (克隆 BoringSSL 和 lsquic)
-
-### 速度慢
-- 检查网络带宽: `iperf3 -c <server_ip>`
-- 增加缓冲区大小: `-b 128` (128KB)
-- 检查 CPU 使用率
-
-## 文件说明
-
-```
-docker/lsquic-test/
-├── Dockerfile              # Docker 镜像定义
-├── docker-compose.yml      # Docker Compose 配置
-├── deploy.sh               # 快速部署脚本
-├── CMakeLists.txt          # CMake 构建配置
-├── speed_test_server.cpp   # 服务端源码
-├── speed_test_client.cpp   # 客户端源码
-└── README.md               # 本文档
-```
-
-## 技术说明
-
-- 基于 lsquic (LiteSpeed QUIC) 库
-- 使用 BoringSSL 作为 TLS 后端
-- 使用 libevent 进行事件驱动 I/O
-- 支持 QUIC v1 协议
+- [lsquic GitHub](https://github.com/litespeedtech/lsquic)
+- [QUIC RFC 9000](https://www.rfc-editor.org/rfc/rfc9000.html)
+- [BoringSSL](https://boringssl.googlesource.com/boringssl/)

@@ -243,9 +243,38 @@ static void timer_handler(evutil_socket_t fd, short what, void *arg) {
 }
 
 
+// ALPN 选择回调
+static int select_alpn(SSL *ssl, const unsigned char **out, unsigned char *outlen,
+                      const unsigned char *in, unsigned int inlen, void *arg) {
+    // 查找 "speedtest" ALPN
+    const unsigned char alpn[] = "speedtest";
+    const unsigned char *p = in;
+    
+    while (p < in + inlen) {
+        unsigned char len = *p++;
+        if (len == sizeof(alpn) - 1 && memcmp(p, alpn, len) == 0) {
+            *out = p;
+            *outlen = len;
+            cout << "[DEBUG] ALPN selected: speedtest" << endl;
+            return SSL_TLSEXT_ERR_OK;
+        }
+        p += len;
+    }
+    
+    cout << "[DEBUG] ALPN not found, using first available" << endl;
+    // 如果没找到，使用第一个
+    if (inlen > 0) {
+        *outlen = in[0];
+        *out = in + 1;
+        return SSL_TLSEXT_ERR_OK;
+    }
+    
+    return SSL_TLSEXT_ERR_NOACK;
+}
+
 // 初始化 SSL
 static bool init_ssl() {
-    g_ssl_ctx = SSL_CTX_new(TLS_server_method());
+    g_ssl_ctx = SSL_CTX_new(TLS_method());  // 使用通用方法
     if (!g_ssl_ctx) {
         cerr << "Failed to create SSL context" << endl;
         return false;
@@ -262,6 +291,15 @@ static bool init_ssl() {
         cerr << "Failed to load private key: " << KEY_FILE << endl;
         return false;
     }
+    
+    // 设置 ALPN 回调
+    SSL_CTX_set_alpn_select_cb(g_ssl_ctx, select_alpn, nullptr);
+    
+    // 设置 TLS 1.3
+    SSL_CTX_set_min_proto_version(g_ssl_ctx, TLS1_3_VERSION);
+    SSL_CTX_set_max_proto_version(g_ssl_ctx, TLS1_3_VERSION);
+    
+    cout << "[DEBUG] SSL_CTX configured with ALPN support" << endl;
     
     return true;
 }
@@ -300,8 +338,19 @@ static bool init_socket() {
     return true;
 }
 
+// lsquic 日志回调
+static int log_buf(void *ctx, const char *buf, size_t len) {
+    fwrite(buf, 1, len, stderr);
+    return (int)len;
+}
+
 // 初始化 lsquic 引擎
 static bool init_engine() {
+    // 设置 lsquic 日志
+    struct lsquic_logger_if logger_if = { .log_buf = log_buf };
+    lsquic_logger_init(&logger_if, nullptr, LLTS_HHMMSSMS);
+    lsquic_set_log_level("event=debug,engine=debug,conn=debug,stream=debug");
+    
     if (lsquic_global_init(LSQUIC_GLOBAL_SERVER | LSQUIC_GLOBAL_CLIENT) != 0) {
         cerr << "Failed to initialize lsquic" << endl;
         return false;
@@ -314,6 +363,10 @@ static bool init_engine() {
     lsquic_engine_init_settings(&settings, LSENG_SERVER);
     settings.es_max_streams_in = 100;
     settings.es_idle_timeout = 60;
+    // 明确使用 IETF QUIC v1
+    settings.es_versions = (1 << LSQVER_I001);
+    
+    cout << "[DEBUG] Server QUIC versions: 0x" << hex << settings.es_versions << dec << endl;
     
     api.ea_settings = &settings;
     api.ea_stream_if = &stream_if;
@@ -327,6 +380,8 @@ static bool init_engine() {
         cerr << "Failed to create lsquic engine" << endl;
         return false;
     }
+    
+    cout << "[DEBUG] Server engine created successfully" << endl;
     
     return true;
 }
