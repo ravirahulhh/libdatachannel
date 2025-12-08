@@ -12,7 +12,27 @@ bash: line 10:    10 Segmentation fault      (core dumped)
 
 ## 根本原因
 
-### 1. `peer_addr_len` 未重置
+### 1. `lsquic_engine_earliest_adv_tick` 参数错误（主要原因）
+**这是导致段错误的真正原因！**
+
+`lsquic_engine_earliest_adv_tick` 的第二个参数需要是一个有效的 `int*` 指针，用于返回时间差值，但代码中传入了 `nullptr`，导致函数尝试向地址 0x0 写入数据，触发段错误。
+
+```cpp
+// 错误的代码 - 导致段错误
+if (lsquic_engine_earliest_adv_tick(g_engine, nullptr)) {
+    // nullptr 导致函数向 0x0 地址写入，触发 SIGSEGV
+}
+```
+
+**Valgrind 错误信息**:
+```
+Invalid write of size 4
+   at lsquic_engine_earliest_adv_tick
+   by read_socket
+Address 0x0 is not stack'd, malloc'd or (recently) free'd
+```
+
+### 2. `peer_addr_len` 未重置
 在 `read_socket` 函数的循环中，`peer_addr_len` 在第一次 `recvfrom` 调用后被修改，但在后续循环中没有重置。这导致第二次调用 `recvfrom` 时传入了错误的长度值，可能导致缓冲区溢出。
 
 ```cpp
@@ -33,7 +53,45 @@ while (true) {
 
 ## 修复方案
 
-### 1. 修复 `peer_addr_len` 重置问题
+### 1. 修复 `lsquic_engine_earliest_adv_tick` 调用（关键修复）
+
+**客户端和服务器 (`read_socket` 和 `timer_handler` 函数):**
+```cpp
+// 修复前 - 导致段错误
+if (lsquic_engine_earliest_adv_tick(g_engine, nullptr)) {
+    struct timeval tv = {0, 1000};
+    event_add(g_timer_event, &tv);
+}
+
+// 修复后 - 正确传递指针
+int diff;
+if (lsquic_engine_earliest_adv_tick(g_engine, &diff)) {
+    struct timeval tv;
+    if (diff > 0) {
+        tv.tv_sec = diff / 1000000;
+        tv.tv_usec = diff % 1000000;
+    } else {
+        tv.tv_sec = 0;
+        tv.tv_usec = 1000;  // 1ms
+    }
+    event_add(g_timer_event, &tv);
+}
+```
+
+**关键改进:**
+- 提供有效的 `int` 指针接收时间差值
+- 根据返回的差值动态设置定时器
+- 避免向 NULL 地址写入数据
+
+**API 说明:**
+```c
+int lsquic_engine_earliest_adv_tick(lsquic_engine_t *engine, int *diff);
+```
+- 返回值: 如果有待处理的连接返回 1，否则返回 0
+- `diff` 参数: 输出参数，返回距离下次需要处理的时间（微秒）
+- **必须传入有效指针，不能是 NULL**
+
+### 2. 修复 `peer_addr_len` 重置问题
 
 **客户端和服务器 (`read_socket` 函数):**
 ```cpp

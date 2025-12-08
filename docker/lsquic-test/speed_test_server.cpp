@@ -248,8 +248,16 @@ static void read_socket(evutil_socket_t fd, short what, void *arg) {
     lsquic_engine_process_conns(g_engine);
     
     // 重新调度定时器
-    if (g_timer_event && lsquic_engine_earliest_adv_tick(g_engine, nullptr)) {
-        struct timeval tv = {0, 1000};
+    int diff;
+    if (g_timer_event && lsquic_engine_earliest_adv_tick(g_engine, &diff)) {
+        struct timeval tv;
+        if (diff > 0) {
+            tv.tv_sec = diff / 1000000;
+            tv.tv_usec = diff % 1000000;
+        } else {
+            tv.tv_sec = 0;
+            tv.tv_usec = 1000;  // 1ms
+        }
         event_add(g_timer_event, &tv);
     }
 }
@@ -261,8 +269,17 @@ static void timer_handler(evutil_socket_t fd, short what, void *arg) {
     
     lsquic_engine_process_conns(g_engine);
     
-    if (g_timer_event && lsquic_engine_earliest_adv_tick(g_engine, nullptr)) {
-        struct timeval tv = {0, 1000};
+    // 重新调度定时器
+    int diff;
+    if (g_timer_event && lsquic_engine_earliest_adv_tick(g_engine, &diff)) {
+        struct timeval tv;
+        if (diff > 0) {
+            tv.tv_sec = diff / 1000000;
+            tv.tv_usec = diff % 1000000;
+        } else {
+            tv.tv_sec = 0;
+            tv.tv_usec = 1000;  // 1ms
+        }
         event_add(g_timer_event, &tv);
     }
 }
