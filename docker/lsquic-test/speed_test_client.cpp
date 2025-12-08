@@ -450,11 +450,6 @@ static bool connect_to_server() {
     }
     
     cout << "[DEBUG] Connection object created at " << (void*)g_conn << endl;
-    
-    // 检查连接是否可以发送数据
-    int can_send = lsquic_conn_want_datagram_write(g_conn);
-    cout << "[DEBUG] Connection want_datagram_write: " << can_send << endl;
-    
     cout << "[DEBUG] Calling process_conns..." << endl;
     lsquic_engine_process_conns(g_engine);
     cout << "[DEBUG] After process_conns, packets_sent=" << g_packets_sent << endl;
