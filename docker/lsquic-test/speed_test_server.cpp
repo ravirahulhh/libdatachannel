@@ -197,12 +197,19 @@ static atomic<uint64_t> g_udp_packets{0};
 
 // 处理接收的数据包
 static void read_socket(evutil_socket_t fd, short what, void *arg) {
+    if (!g_engine) {
+        cerr << "[ERROR] read_socket: g_engine is NULL" << endl;
+        return;
+    }
+    
     unsigned char buf[0xFFFF];
     struct sockaddr_storage peer_addr;
-    socklen_t peer_addr_len = sizeof(peer_addr);
+    socklen_t peer_addr_len;
     
-    // 循环读取所有可用的数据包
-    while (true) {
+    // 循环读取所有可用的数据包（最多 10 个，避免饿死其他事件）
+    for (int i = 0; i < 10; i++) {
+        peer_addr_len = sizeof(peer_addr);  // 每次循环都要重置
+        
         ssize_t nr = recvfrom(fd, buf, sizeof(buf), 0, 
                               (struct sockaddr*)&peer_addr, &peer_addr_len);
         
@@ -241,16 +248,20 @@ static void read_socket(evutil_socket_t fd, short what, void *arg) {
     lsquic_engine_process_conns(g_engine);
     
     // 重新调度定时器
-    if (lsquic_engine_earliest_adv_tick(g_engine, nullptr)) {
+    if (g_timer_event && lsquic_engine_earliest_adv_tick(g_engine, nullptr)) {
         struct timeval tv = {0, 1000};
         event_add(g_timer_event, &tv);
     }
 }
 
 static void timer_handler(evutil_socket_t fd, short what, void *arg) {
+    if (!g_engine) {
+        return;
+    }
+    
     lsquic_engine_process_conns(g_engine);
     
-    if (lsquic_engine_earliest_adv_tick(g_engine, nullptr)) {
+    if (g_timer_event && lsquic_engine_earliest_adv_tick(g_engine, nullptr)) {
         struct timeval tv = {0, 1000};
         event_add(g_timer_event, &tv);
     }

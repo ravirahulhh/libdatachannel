@@ -133,6 +133,18 @@ static void on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *ctx) {
 }
 
 static void on_write(lsquic_stream_t *stream, lsquic_stream_ctx_t *ctx) {
+    if (!stream) {
+        cerr << "[ERROR] on_write: stream is NULL" << endl;
+        return;
+    }
+    
+    if (g_total_to_send == 0) {
+        // 没有数据要发送，立即关闭
+        lsquic_stream_shutdown(stream, 1);
+        lsquic_stream_wantwrite(stream, 0);
+        return;
+    }
+    
     if (g_sent >= g_total_to_send) {
         // 所有数据已写入缓冲区，关闭写端
         lsquic_stream_shutdown(stream, 1);  // 发送 FIN
@@ -224,12 +236,19 @@ static int send_packets(void *ctx, const struct lsquic_out_spec *specs, unsigned
 
 // 处理接收的数据包
 static void read_socket(evutil_socket_t fd, short what, void *arg) {
+    if (!g_engine) {
+        cerr << "[ERROR] read_socket: g_engine is NULL" << endl;
+        return;
+    }
+    
     unsigned char buf[0xFFFF];
     struct sockaddr_storage peer_addr;
-    socklen_t peer_addr_len = sizeof(peer_addr);
+    socklen_t peer_addr_len;
     
-    // 循环读取所有可用的数据包
-    while (true) {
+    // 循环读取所有可用的数据包（最多 10 个，避免饿死其他事件）
+    for (int i = 0; i < 10; i++) {
+        peer_addr_len = sizeof(peer_addr);  // 每次循环都要重置
+        
         ssize_t nr = recvfrom(fd, buf, sizeof(buf), 0, 
                               (struct sockaddr*)&peer_addr, &peer_addr_len);
         
@@ -262,13 +281,17 @@ static void read_socket(evutil_socket_t fd, short what, void *arg) {
     
     lsquic_engine_process_conns(g_engine);
     
-    if (lsquic_engine_earliest_adv_tick(g_engine, nullptr)) {
+    if (g_timer_event && lsquic_engine_earliest_adv_tick(g_engine, nullptr)) {
         struct timeval tv = {0, 1000};
         event_add(g_timer_event, &tv);
     }
 }
 
 static void timer_handler(evutil_socket_t fd, short what, void *arg) {
+    if (!g_engine) {
+        return;
+    }
+    
     static int tick_count = 0;
     static int no_response_count = 0;
     
@@ -281,14 +304,16 @@ static void timer_handler(evutil_socket_t fd, short what, void *arg) {
             cerr << "\n[ERROR] Connection timeout: no response from server after 10 seconds" << endl;
             cerr << "[DEBUG] Packets sent: " << g_packets_sent << ", received: " << g_packets_recv << endl;
             g_running = false;
-            event_base_loopbreak(g_event_base);
+            if (g_event_base) {
+                event_base_loopbreak(g_event_base);
+            }
             return;
         }
     }
     
     lsquic_engine_process_conns(g_engine);
     
-    if (lsquic_engine_earliest_adv_tick(g_engine, nullptr)) {
+    if (g_timer_event && lsquic_engine_earliest_adv_tick(g_engine, nullptr)) {
         struct timeval tv = {0, 1000};
         event_add(g_timer_event, &tv);
     }
@@ -297,7 +322,9 @@ static void timer_handler(evutil_socket_t fd, short what, void *arg) {
         // 流已关闭，所有数据已确认，可以退出
         static int wait_count = 0;
         if (++wait_count > 10) {
-            event_base_loopbreak(g_event_base);
+            if (g_event_base) {
+                event_base_loopbreak(g_event_base);
+            }
         }
     }
 }
