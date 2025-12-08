@@ -8,7 +8,7 @@ LABEL description="lsquic transport speed test environment"
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 安装基础依赖
+# 安装基础依赖和调试工具
 RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
@@ -23,6 +23,9 @@ RUN apt-get update && apt-get install -y \
     iputils-ping \
     iproute2 \
     iperf3 \
+    gdb \
+    valgrind \
+    strace \
     && rm -rf /var/lib/apt/lists/*
 
 # 安装 CMake 3.22+ (BoringSSL 需要)

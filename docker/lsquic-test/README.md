@@ -52,6 +52,41 @@ docker logs -f lsquic-server
 ### 查看客户端日志
 客户端以交互模式运行，直接在终端查看输出
 
+### 调试段错误
+
+镜像已包含 gdb、valgrind 和 strace 调试工具。
+
+#### 使用 GDB 调试
+```bash
+chmod +x debug-with-gdb.sh
+./debug-with-gdb.sh
+```
+
+#### 使用 Valgrind 检测内存错误
+```bash
+chmod +x debug-segfault.sh
+./debug-segfault.sh
+```
+
+#### 使用 strace 跟踪系统调用
+```bash
+chmod +x debug-with-strace.sh
+./debug-with-strace.sh
+```
+
+#### 手动调试
+```bash
+# 启动服务器
+./deploy.sh server
+
+# 在另一个终端使用 GDB
+docker run -it --rm --network host \
+    --cap-add=SYS_PTRACE \
+    lsquic-speed-test:latest \
+    gdb -ex 'run -s <server_ip> -g 0.01' \
+    /app/build/speed_test_client
+```
+
 ### 网络检查
 ```bash
 # 检查 UDP 端口是否开放

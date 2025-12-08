@@ -163,27 +163,55 @@ cd docker/lsquic-test
 
 ### 如果仍然崩溃
 
-1. **启用 core dump**:
-   ```bash
-   ulimit -c unlimited
-   docker run ... 
-   # 崩溃后
-   gdb /app/build/speed_test_client core
-   bt  # 查看堆栈跟踪
-   ```
+镜像已包含 gdb、valgrind 和 strace 调试工具。
 
-2. **使用 valgrind**:
+1. **快速测试**:
    ```bash
-   docker run -it --rm --network host lsquic-speed-test:latest \
+   chmod +x quick-test.sh
+   ./quick-test.sh
+   ```
+   这会运行一个简单的测试并报告是否有段错误。
+
+2. **使用 valgrind 检测内存错误**:
+   ```bash
+   chmod +x debug-segfault.sh
+   ./debug-segfault.sh
+   ```
+   这会显示详细的内存错误报告。
+
+3. **使用 GDB 调试**:
+   ```bash
+   chmod +x debug-with-gdb.sh
+   ./debug-with-gdb.sh
+   ```
+   这会在崩溃时显示堆栈跟踪和局部变量。
+
+4. **使用 strace 跟踪系统调用**:
+   ```bash
+   chmod +x debug-with-strace.sh
+   ./debug-with-strace.sh
+   ```
+   这会显示崩溃前的最后系统调用。
+
+5. **手动使用 valgrind**:
+   ```bash
+   # 启动服务器
+   ./deploy.sh server
+   
+   # 在另一个终端
+   docker run -it --rm --network host \
+       --cap-add=SYS_PTRACE \
+       lsquic-speed-test:latest \
        valgrind --leak-check=full --track-origins=yes \
        /app/build/speed_test_client -s 127.0.0.1 -g 0.01
    ```
 
-3. **使用 AddressSanitizer**:
+6. **使用 AddressSanitizer** (需要重新编译):
    在 CMakeLists.txt 中添加：
    ```cmake
    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -g")
    ```
+   然后重新构建镜像。
 
 ## 相关问题
 
