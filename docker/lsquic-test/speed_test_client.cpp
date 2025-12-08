@@ -362,8 +362,19 @@ static bool init_ssl() {
     return true;
 }
 
+// lsquic 日志回调
+static int log_buf(void *ctx, const char *buf, size_t len) {
+    fwrite(buf, 1, len, stderr);
+    return (int)len;
+}
+
 // 初始化 lsquic 引擎
 static bool init_engine() {
+    // 设置 lsquic 日志
+    struct lsquic_logger_if logger_if = { .log_buf = log_buf };
+    lsquic_logger_init(&logger_if, nullptr, LLTS_HHMMSSMS);
+    lsquic_set_log_level("debug");
+    
     if (lsquic_global_init(LSQUIC_GLOBAL_CLIENT) != 0) {
         cerr << "Failed to initialize lsquic" << endl;
         return false;
@@ -418,25 +429,33 @@ static bool connect_to_server() {
     cout << "[DEBUG] Local: " << local_str << ":" << ntohs(local->sin_port) << endl;
     cout << "[DEBUG] Peer: " << peer_str << ":" << ntohs(peer->sin_port) << endl;
     
+    // 注意：peer_ctx 应该传递给 get_ssl_ctx，这里传 nullptr 可能有问题
+    // 尝试传递一个有效的上下文
     g_conn = lsquic_engine_connect(
         g_engine,
         N_LSQVER,
         (struct sockaddr*)&g_local_addr,
         (struct sockaddr*)&g_peer_addr,
-        nullptr,
-        nullptr,
-        g_server_addr.c_str(),
-        0,
-        nullptr, 0,
-        nullptr, 0
+        (void*)&g_peer_addr,  // peer_ctx - 传递对端地址作为上下文
+        nullptr,              // conn_ctx
+        g_server_addr.c_str(), // SNI hostname
+        0,                    // base_plpmtu
+        nullptr, 0,           // sess_resume
+        nullptr, 0            // token
     );
     
     if (!g_conn) {
-        cerr << "Failed to create connection" << endl;
+        cerr << "[ERROR] lsquic_engine_connect returned NULL!" << endl;
         return false;
     }
     
-    cout << "[DEBUG] Connection object created, processing..." << endl;
+    cout << "[DEBUG] Connection object created at " << (void*)g_conn << endl;
+    
+    // 检查连接是否可以发送数据
+    int can_send = lsquic_conn_want_datagram_write(g_conn);
+    cout << "[DEBUG] Connection want_datagram_write: " << can_send << endl;
+    
+    cout << "[DEBUG] Calling process_conns..." << endl;
     lsquic_engine_process_conns(g_engine);
     cout << "[DEBUG] After process_conns, packets_sent=" << g_packets_sent << endl;
     
@@ -462,9 +481,6 @@ void print_usage(const char* prog) {
 }
 
 int main(int argc, char *argv[]) {
-    // 启用 lsquic 日志 (用于调试)
-    setenv("LSQUIC_LOG_LEVEL", "debug", 1);
-    
     // 解析命令行参数
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
