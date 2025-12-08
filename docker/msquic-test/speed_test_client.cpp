@@ -40,6 +40,7 @@ string ServerAddress = "127.0.0.1";
 uint16_t ServerPort = 9331;
 uint64_t DataSizeGB = 1; // 默认发送 1GB 数据
 uint32_t BufferSize = 64 * 1024; // 64KB 缓冲区
+string CongestionAlgorithm = "cubic";  // 默认使用 CUBIC，可选: cubic, bbr
 
 void PrintStats() {
     while (Running && !SendComplete) {
@@ -92,8 +93,24 @@ QUIC_STATUS QUIC_API StreamCallback(HQUIC Stream, void* Context, QUIC_STREAM_EVE
 QUIC_STATUS QUIC_API ConnectionCallback(HQUIC Connection, void* Context, QUIC_CONNECTION_EVENT* Event) {
     switch (Event->Type) {
     case QUIC_CONNECTION_EVENT_CONNECTED:
-        cout << "\n[Client] Connected to server!" << endl;
-        Connected = true;
+        {
+            cout << "\n[Client] Connected to server!" << endl;
+            
+            // 设置拥塞控制算法
+            uint16_t ccAlgo;
+            if (CongestionAlgorithm == "bbr") {
+                ccAlgo = QUIC_CONGESTION_CONTROL_ALGORITHM_BBR;
+                cout << "[Client] Using BBR congestion control" << endl;
+            } else {
+                ccAlgo = QUIC_CONGESTION_CONTROL_ALGORITHM_CUBIC;
+                cout << "[Client] Using CUBIC congestion control" << endl;
+            }
+            
+            MsQuic->SetParam(Connection, QUIC_PARAM_CONN_CONGESTION_CONTROL_ALGORITHM,
+                           sizeof(ccAlgo), &ccAlgo);
+            
+            Connected = true;
+        }
         break;
         
     case QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_TRANSPORT:
@@ -283,11 +300,12 @@ void Cleanup() {
 void PrintUsage(const char* prog) {
     cout << "Usage: " << prog << " [options]" << endl;
     cout << "Options:" << endl;
-    cout << "  -s <address>  Server address (default: 127.0.0.1)" << endl;
-    cout << "  -p <port>     Server port (default: 9331)" << endl;
-    cout << "  -g <size>     Data size in GB (default: 1)" << endl;
-    cout << "  -b <size>     Buffer size in KB (default: 64)" << endl;
-    cout << "  -h            Show this help" << endl;
+    cout << "  -s <address>    Server address (default: 127.0.0.1)" << endl;
+    cout << "  -p <port>       Server port (default: 9331)" << endl;
+    cout << "  -g <size>       Data size in GB (default: 1)" << endl;
+    cout << "  -b <size>       Buffer size in KB (default: 64)" << endl;
+    cout << "  -c <algorithm>  Congestion control algorithm: cubic or bbr (default: cubic)" << endl;
+    cout << "  -h              Show this help" << endl;
 }
 
 int main(int argc, char* argv[]) {
@@ -301,6 +319,13 @@ int main(int argc, char* argv[]) {
             DataSizeGB = atoi(argv[++i]);
         } else if (strcmp(argv[i], "-b") == 0 && i + 1 < argc) {
             BufferSize = atoi(argv[++i]) * 1024;
+        } else if (strcmp(argv[i], "-c") == 0 && i + 1 < argc) {
+            CongestionAlgorithm = argv[++i];
+            if (CongestionAlgorithm != "cubic" && CongestionAlgorithm != "bbr") {
+                cerr << "Invalid congestion control algorithm: " << CongestionAlgorithm << endl;
+                cerr << "Valid options: cubic, bbr" << endl;
+                return 1;
+            }
         } else if (strcmp(argv[i], "-h") == 0) {
             PrintUsage(argv[0]);
             return 0;
@@ -311,6 +336,7 @@ int main(int argc, char* argv[]) {
     cout << "Server: " << ServerAddress << ":" << ServerPort << endl;
     cout << "Data size: " << DataSizeGB << " GB" << endl;
     cout << "Buffer size: " << (BufferSize / 1024) << " KB" << endl;
+    cout << "Congestion Control: " << CongestionAlgorithm << endl;
     
     if (!InitializeClient()) {
         cerr << "Failed to initialize client" << endl;

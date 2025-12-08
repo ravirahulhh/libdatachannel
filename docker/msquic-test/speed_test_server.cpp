@@ -37,6 +37,7 @@ mutex StatsMutex;
 // 配置
 const char* ALPN = "speedtest";
 const uint16_t PORT = 9331;
+string CongestionAlgorithm = "cubic";  // 默认使用 CUBIC，可选: cubic, bbr
 
 // 证书配置 (自签名)
 QUIC_CREDENTIAL_CONFIG CredConfig;
@@ -115,13 +116,29 @@ QUIC_STATUS QUIC_API StreamCallback(HQUIC Stream, void* Context, QUIC_STREAM_EVE
 QUIC_STATUS QUIC_API ConnectionCallback(HQUIC Connection, void* Context, QUIC_CONNECTION_EVENT* Event) {
     switch (Event->Type) {
     case QUIC_CONNECTION_EVENT_CONNECTED:
-        TotalConnections++;
-        ActiveConnections++;
-        SessionBytesReceived = 0;  // 重置会话统计
-        SessionStartTime = steady_clock::now();
-        HasActiveSession = true;
-        cout << "\n[Server] Client connected! Active: " << ActiveConnections << ", Total: " << TotalConnections << endl;
-        MsQuic->ConnectionSendResumptionTicket(Connection, QUIC_SEND_RESUMPTION_FLAG_NONE, 0, nullptr);
+        {
+            TotalConnections++;
+            ActiveConnections++;
+            SessionBytesReceived = 0;  // 重置会话统计
+            SessionStartTime = steady_clock::now();
+            HasActiveSession = true;
+            
+            // 设置拥塞控制算法
+            uint16_t ccAlgo;
+            if (CongestionAlgorithm == "bbr") {
+                ccAlgo = QUIC_CONGESTION_CONTROL_ALGORITHM_BBR;
+                cout << "\n[Server] Client connected! Using BBR congestion control" << endl;
+            } else {
+                ccAlgo = QUIC_CONGESTION_CONTROL_ALGORITHM_CUBIC;
+                cout << "\n[Server] Client connected! Using CUBIC congestion control" << endl;
+            }
+            
+            MsQuic->SetParam(Connection, QUIC_PARAM_CONN_CONGESTION_CONTROL_ALGORITHM,
+                           sizeof(ccAlgo), &ccAlgo);
+            
+            cout << "[Server] Active: " << ActiveConnections << ", Total: " << TotalConnections << endl;
+            MsQuic->ConnectionSendResumptionTicket(Connection, QUIC_SEND_RESUMPTION_FLAG_NONE, 0, nullptr);
+        }
         break;
         
     case QUIC_CONNECTION_EVENT_PEER_STREAM_STARTED:
@@ -260,9 +277,32 @@ void Cleanup() {
     }
 }
 
+void PrintUsage(const char* prog) {
+    cout << "Usage: " << prog << " [options]" << endl;
+    cout << "Options:" << endl;
+    cout << "  -c <algorithm>  Congestion control algorithm: cubic or bbr (default: cubic)" << endl;
+    cout << "  -h              Show this help" << endl;
+}
+
 int main(int argc, char* argv[]) {
+    // 解析命令行参数
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-c") == 0 && i + 1 < argc) {
+            CongestionAlgorithm = argv[++i];
+            if (CongestionAlgorithm != "cubic" && CongestionAlgorithm != "bbr") {
+                cerr << "Invalid congestion control algorithm: " << CongestionAlgorithm << endl;
+                cerr << "Valid options: cubic, bbr" << endl;
+                return 1;
+            }
+        } else if (strcmp(argv[i], "-h") == 0) {
+            PrintUsage(argv[0]);
+            return 0;
+        }
+    }
+    
     cout << "=== MsQuic Speed Test Server ===" << endl;
     cout << "Listening on port " << PORT << " (UDP)" << endl;
+    cout << "Congestion Control: " << CongestionAlgorithm << endl;
     
     if (!InitializeServer()) {
         cerr << "Failed to initialize server" << endl;

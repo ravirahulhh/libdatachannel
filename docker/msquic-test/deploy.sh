@@ -46,6 +46,7 @@ MsQuic 速度测试部署脚本
   -s <address>    服务器地址 (客户端模式)
   -g <size>       发送数据大小 (GB), 默认 1
   -p <port>       端口号, 默认 9331
+  -c <algorithm>  拥塞控制算法 (cubic 或 bbr), 默认 cubic
 
 EOF
 }
@@ -59,9 +60,18 @@ build_image() {
 
 # 启动服务端
 start_server() {
-    local port=${1:-9331}
+    local port=9331
+    local cc_algo="cubic"
     
-    print_info "启动 MsQuic 服务端 (端口: $port)..."
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -p) port="$2"; shift 2 ;;
+            -c) cc_algo="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    
+    print_info "启动 MsQuic 服务端 (端口: $port, 拥塞控制: $cc_algo)..."
     
     # 停止已存在的容器
     docker rm -f msquic-server 2>/dev/null || true
@@ -75,7 +85,7 @@ start_server() {
         bash -c "
             cd /app &&
             openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj '/CN=localhost' 2>/dev/null &&
-            ./build/speed_test_server
+            ./build/speed_test_server -c $cc_algo
         "
     
     print_info "服务端已启动!"
@@ -88,19 +98,21 @@ start_client() {
     local server_addr=""
     local data_size=1
     local port=9331
+    local cc_algo="cubic"
     
     while [[ $# -gt 0 ]]; do
         case $1 in
             -s) server_addr="$2"; shift 2 ;;
             -g) data_size="$2"; shift 2 ;;
             -p) port="$2"; shift 2 ;;
+            -c) cc_algo="$2"; shift 2 ;;
             *) shift ;;
         esac
     done
     
     if [ -z "$server_addr" ]; then
-        print_error "请指定服务器地址: $0 client -s <server_ip> -p <port> -g <size_gb>"
-        print_error "示例: $0 client -s 192.168.1.100 -p 9331 -g 5"
+        print_error "请指定服务器地址: $0 client -s <server_ip> [-p <port>] [-g <size_gb>] [-c <cubic|bbr>]"
+        print_error "示例: $0 client -s 192.168.1.100 -p 9331 -g 5 -c bbr"
         exit 1
     fi
     
@@ -108,6 +120,7 @@ start_client() {
     print_info "服务器: $server_addr"
     print_info "端口: $port"
     print_info "数据量: ${data_size}GB"
+    print_info "拥塞控制: $cc_algo"
     
     # 停止已存在的容器
     docker rm -f msquic-client 2>/dev/null || true
@@ -117,7 +130,7 @@ start_client() {
         --name msquic-client \
         --network host \
         msquic-speed-test:latest \
-        /app/build/speed_test_client -s "$server_addr" -p "$port" -g "$data_size"
+        /app/build/speed_test_client -s "$server_addr" -p "$port" -g "$data_size" -c "$cc_algo"
 }
 
 # 本地测试
