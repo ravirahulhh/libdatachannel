@@ -205,6 +205,10 @@ int main(int argc, char* argv[]) {
         // Set remote description using simplified API
         transport.setRemoteDescription(remoteDesc);
         std::cout << "Remote description set." << std::endl;
+        
+        // Signal that all remote candidates have been received
+        transport.endOfRemoteCandidates();
+        std::cout << "End of remote candidates signaled." << std::endl;
         std::cout << "Waiting for connection..." << std::endl;
         
         // Wait for connection or timeout

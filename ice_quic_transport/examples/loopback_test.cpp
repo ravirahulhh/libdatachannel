@@ -174,6 +174,11 @@ public:
         log("Remote description set");
     }
     
+    void endOfRemoteCandidates() {
+        mTransport->endOfRemoteCandidates();
+        log("End of remote candidates signaled");
+    }
+    
     uint64_t openStream() {
         return mTransport->openStream();
     }
@@ -316,6 +321,10 @@ int main(int argc, char* argv[]) {
         std::cout << "--- Step 4: Set Remote Descriptions ---" << std::endl;
         server.setRemoteDescription(clientDesc);
         client.setRemoteDescription(serverDesc);
+        
+        // Signal end of remote candidates
+        server.endOfRemoteCandidates();
+        client.endOfRemoteCandidates();
         std::cout << std::endl;
         
         // Wait for connection

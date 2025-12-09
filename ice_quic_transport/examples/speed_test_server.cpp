@@ -1,29 +1,29 @@
 /**
- * @file echo_server.cpp
- * @brief ICE+QUIC Echo Server Example
+ * @file speed_test_server.cpp
+ * @brief ICE+QUIC Speed Test Server
  * 
- * This example demonstrates how to use IceQuicTransport in server mode
- * with the simplified API using getLocalDescription/setRemoteDescription.
+ * This example demonstrates high-throughput data transfer testing using IceQuicTransport.
  * 
  * The server:
  * 1. Initializes IceQuicTransport in server mode
  * 2. Gathers ICE candidates
- * 3. Displays local IceDescription (ufrag, pwd, candidates) for exchange
+ * 3. Displays local IceDescription for exchange
  * 4. Accepts remote IceDescription from stdin
- * 5. Echoes received data back to the sender
+ * 5. Receives data and displays real-time speed statistics
+ * 6. Shows average speed after transfer completion
  * 
  * Usage:
- *   ./echo_server <cert_path> <key_path>
+ *   ./speed_test_server <cert_path> <key_path>
  * 
  * Example:
- *   ./echo_server server.crt server.key
+ *   ./speed_test_server server.crt server.key
  * 
  * To generate self-signed certificates for testing:
  *   openssl req -x509 -newkey rsa:2048 -keyout server.key -out server.crt \
  *       -days 365 -nodes -subj "/CN=localhost"
  * 
- * @see echo_client.cpp for the client counterpart
- * @see loopback_test.cpp for automated testing
+ * @see speed_test_client.cpp for the client counterpart
+ * @see echo_server.cpp for basic echo example
  */
 
 #include "ice_quic_transport.hpp"
@@ -36,20 +36,81 @@
 #include <thread>
 #include <chrono>
 #include <csignal>
-#include <vector>
+#include <iomanip>
 
 using namespace ice_quic;
 
-// Global flag for graceful shutdown
 static std::atomic<bool> g_running{true};
 
-// Signal handler for graceful shutdown
+// 速度统计
+struct SpeedStats {
+    std::atomic<uint64_t> totalBytes{0};
+    std::atomic<uint64_t> lastBytes{0};
+    std::chrono::steady_clock::time_point startTime;
+    std::chrono::steady_clock::time_point lastTime;
+    std::mutex mtx;
+    
+    void reset() {
+        totalBytes = 0;
+        lastBytes = 0;
+        startTime = std::chrono::steady_clock::now();
+        lastTime = startTime;
+    }
+    
+    void addBytes(uint64_t bytes) {
+        totalBytes += bytes;
+    }
+    
+    void printSpeed() {
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTime).count();
+        
+        if (elapsed >= 1000) {  // 每秒打印一次
+            uint64_t currentTotal = totalBytes.load();
+            uint64_t lastTotal = lastBytes.load();
+            uint64_t bytesInPeriod = currentTotal - lastTotal;
+            
+            double speedMbps = (bytesInPeriod * 8.0 / 1000000.0) / (elapsed / 1000.0);
+            double totalMB = currentTotal / (1024.0 * 1024.0);
+            
+            std::cout << "[SPEED] " << std::fixed << std::setprecision(2) 
+                      << speedMbps << " Mbps | Received: " 
+                      << totalMB << " MB" << std::endl;
+            
+            lastBytes = currentTotal;
+            lastTime = now;
+        }
+    }
+    
+    void printFinalStats() {
+        auto endTime = std::chrono::steady_clock::now();
+        auto totalTime = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+        
+        uint64_t total = totalBytes.load();
+        double totalMB = total / (1024.0 * 1024.0);
+        double totalGB = total / (1024.0 * 1024.0 * 1024.0);
+        double avgSpeedMbps = (total * 8.0 / 1000000.0) / (totalTime / 1000.0);
+        
+        std::cout << std::endl;
+        std::cout << "========== Transfer Complete ==========" << std::endl;
+        std::cout << "Total Received: " << std::fixed << std::setprecision(2) << totalMB << " MB";
+        if (totalGB >= 1.0) {
+            std::cout << " (" << totalGB << " GB)";
+        }
+        std::cout << std::endl;
+        std::cout << "Transfer Time: " << (totalTime / 1000.0) << " seconds" << std::endl;
+        std::cout << "Average Speed: " << avgSpeedMbps << " Mbps" << std::endl;
+        std::cout << "=======================================" << std::endl;
+    }
+};
+
+SpeedStats g_stats;
+
 void signalHandler(int signum) {
     std::cout << "\nReceived signal " << signum << ", shutting down..." << std::endl;
     g_running = false;
 }
 
-// Helper to print usage
 void printUsage(const char* programName) {
     std::cerr << "Usage: " << programName << " <cert_path> <key_path>" << std::endl;
     std::cerr << std::endl;
@@ -63,7 +124,6 @@ void printUsage(const char* programName) {
 }
 
 int main(int argc, char* argv[]) {
-    // Check command line arguments
     if (argc < 3) {
         printUsage(argv[0]);
         return 1;
@@ -72,27 +132,25 @@ int main(int argc, char* argv[]) {
     const std::string certPath = argv[1];
     const std::string keyPath = argv[2];
     
-    std::cout << "=== ICE+QUIC Echo Server ===" << std::endl;
+    std::cout << "=== ICE+QUIC Speed Test Server ===" << std::endl;
     std::cout << std::endl;
     
-    // Set up signal handlers
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
     
-    // Synchronization for connection state
     std::mutex mtx;
     std::condition_variable cv;
     std::atomic<bool> connected{false};
     std::atomic<bool> gatheringComplete{false};
+    std::atomic<bool> transferComplete{false};
     
     try {
-        // Configure the transport in server mode using simplified API
         IceQuicConfig config;
-        config.stunServers = {"stun.l.google.com:19302"};  // Vector of "host:port"
+        config.stunServers = {"stun.l.google.com:19302"};
         config.isServer = true;
         config.certPath = certPath;
         config.keyPath = keyPath;
-        config.idleTimeoutMs = 60000;  // 60 second idle timeout
+        config.idleTimeoutMs = 300000;  // 5 minute idle timeout
         config.maxStreams = 100;
         
         std::cout << "Configuration:" << std::endl;
@@ -106,98 +164,79 @@ int main(int argc, char* argv[]) {
         std::cout << "  Private Key: " << keyPath << std::endl;
         std::cout << std::endl;
         
-        // Set up callbacks
         IceQuicCallbacks callbacks;
         
-        // ICE candidate callback - print each candidate as it's discovered
         callbacks.onLocalCandidate = [](const std::string& candidateSdp) {
             std::cout << "[ICE] Local candidate: " << candidateSdp << std::endl;
         };
         
-        // Gathering complete callback
         callbacks.onGatheringComplete = [&]() {
             std::cout << std::endl;
             std::cout << "[ICE] Candidate gathering complete!" << std::endl;
             std::cout << std::endl;
-            
             gatheringComplete = true;
             cv.notify_all();
         };
         
-        // Connection established callback
         callbacks.onConnected = [&]() {
             std::cout << std::endl;
             std::cout << "[QUIC] Connection established!" << std::endl;
-            std::cout << "Server is ready to echo data." << std::endl;
+            std::cout << "Server is ready to receive data." << std::endl;
             std::cout << std::endl;
-            
             connected = true;
+            g_stats.reset();
             cv.notify_all();
         };
         
-        // Disconnection callback
         callbacks.onDisconnected = [&]() {
             std::cout << "[QUIC] Disconnected" << std::endl;
             connected = false;
+            if (!transferComplete) {
+                g_stats.printFinalStats();
+                transferComplete = true;
+            }
             cv.notify_all();
         };
         
-        // Connection failed callback
         callbacks.onFailed = [&](const std::string& error) {
             std::cerr << "[ERROR] Connection failed: " << error << std::endl;
             g_running = false;
             cv.notify_all();
         };
         
-        // Stream opened callback
         callbacks.onStreamOpened = [](uint64_t streamId) {
             std::cout << "[STREAM] Peer opened stream " << streamId << std::endl;
         };
         
-        // Stream closed callback
-        callbacks.onStreamClosed = [](uint64_t streamId) {
+        callbacks.onStreamClosed = [&](uint64_t streamId) {
             std::cout << "[STREAM] Stream " << streamId << " closed" << std::endl;
-        };
-        
-        // Data received callback - echo back to sender
-        IceQuicTransport* transportPtr = nullptr;
-        callbacks.onData = [&](uint64_t streamId, const uint8_t* data, size_t len) {
-            std::string received(reinterpret_cast<const char*>(data), len);
-            std::cout << "[DATA] Received on stream " << streamId << ": " << received << std::endl;
-            
-            // Echo the data back
-            if (transportPtr && transportPtr->getState() == TransportState::Connected) {
-                if (transportPtr->send(streamId, data, len)) {
-                    std::cout << "[DATA] Echoed " << len << " bytes back on stream " << streamId << std::endl;
-                } else {
-                    std::cerr << "[ERROR] Failed to echo data" << std::endl;
-                }
+            if (!transferComplete) {
+                g_stats.printFinalStats();
+                transferComplete = true;
             }
         };
         
-        // Create the transport
+        callbacks.onData = [&](uint64_t streamId, const uint8_t* data, size_t len) {
+            g_stats.addBytes(len);
+            g_stats.printSpeed();
+        };
+        
         std::cout << "Initializing ICE+QUIC transport..." << std::endl;
         IceQuicTransport transport(config, callbacks);
-        transportPtr = &transport;
         
         std::cout << "Transport initialized successfully." << std::endl;
         std::cout << std::endl;
         
-        // Start candidate gathering
         std::cout << "Starting ICE candidate gathering..." << std::endl;
         transport.gatherCandidates();
         
-        // Wait for gathering to complete
         {
             std::unique_lock<std::mutex> lock(mtx);
             cv.wait(lock, [&]() { return gatheringComplete.load() || !g_running; });
         }
         
-        if (!g_running) {
-            return 0;
-        }
+        if (!g_running) return 0;
         
-        // Get and display local description using simplified API
         IceDescription localDesc = transport.getLocalDescription();
         
         std::cout << "=== LOCAL ICE DESCRIPTION ===" << std::endl;
@@ -210,7 +249,6 @@ int main(int argc, char* argv[]) {
         std::cout << "=============================" << std::endl;
         std::cout << std::endl;
         
-        // Prompt for remote description
         std::cout << "Enter remote ICE description:" << std::endl;
         IceDescription remoteDesc;
         
@@ -226,22 +264,26 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         
-        // Prompt for remote candidates
         std::cout << "Enter remote ICE candidates (one per line, empty line to finish):" << std::endl;
         std::string candidateLine;
-        
         while (std::getline(std::cin, candidateLine)) {
-            if (candidateLine.empty()) {
-                break;
+            if (candidateLine.empty()) break;
+            
+            // Remove "a=" prefix if present
+            if (candidateLine.find("a=") == 0) {
+                candidateLine = candidateLine.substr(2);
             }
-            remoteDesc.candidates.push_back(candidateLine);
-            std::cout << "  Added candidate #" << remoteDesc.candidates.size() << std::endl;
+            
+            // Skip empty lines and comments
+            if (!candidateLine.empty() && candidateLine[0] != '#') {
+                remoteDesc.candidates.push_back(candidateLine);
+                std::cout << "  Added candidate #" << remoteDesc.candidates.size() << std::endl;
+            }
         }
         
         std::cout << std::endl;
         std::cout << "Collected " << remoteDesc.candidates.size() << " remote candidate(s)." << std::endl;
         
-        // Set remote description using simplified API
         transport.setRemoteDescription(remoteDesc);
         std::cout << "Remote description set." << std::endl;
         
@@ -250,10 +292,9 @@ int main(int argc, char* argv[]) {
         std::cout << "End of remote candidates signaled." << std::endl;
         std::cout << "Waiting for connection..." << std::endl;
         
-        // Wait for connection or timeout
         {
             std::unique_lock<std::mutex> lock(mtx);
-            if (!cv.wait_for(lock, std::chrono::seconds(30), [&]() { 
+            if (!cv.wait_for(lock, std::chrono::seconds(60), [&]() { 
                 return connected.load() || !g_running; 
             })) {
                 std::cerr << "Connection timeout!" << std::endl;
@@ -261,27 +302,20 @@ int main(int argc, char* argv[]) {
             }
         }
         
-        if (!g_running) {
-            return 0;
-        }
+        if (!g_running) return 0;
         
-        // Main loop - keep running until shutdown
         std::cout << std::endl;
         std::cout << "Server running. Press Ctrl+C to stop." << std::endl;
         std::cout << std::endl;
         
         while (g_running && connected) {
-            // Display statistics periodically
-            std::this_thread::sleep_for(std::chrono::seconds(5));
-            
-            if (connected && transport.getState() == TransportState::Connected) {
-                std::cout << "[STATS] RTT: " << transport.getRtt() << "ms"
-                          << ", Sent: " << transport.getBytesSent() << " bytes"
-                          << ", Received: " << transport.getBytesReceived() << " bytes" << std::endl;
-            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
         
-        // Graceful shutdown
+        if (!transferComplete) {
+            g_stats.printFinalStats();
+        }
+        
         std::cout << "Closing connection..." << std::endl;
         transport.close();
         

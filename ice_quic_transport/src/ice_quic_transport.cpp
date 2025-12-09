@@ -397,7 +397,17 @@ void IceQuicTransport::runQuicEventLoop() {
 void IceQuicTransport::processQuicEvents() {}
 
 void IceQuicTransport::startQuicConnection() {
-    if (!mQuicEngine || !mAddressesSet) return;
+    fprintf(stderr, "[QUIC-DEBUG] startQuicConnection called: engine=%p, addressesSet=%d, isServer=%d\n",
+            (void*)mQuicEngine, mAddressesSet, mConfig.isServer);
+    
+    if (!mQuicEngine || !mAddressesSet) {
+        fprintf(stderr, "[QUIC-DEBUG] Aborting: engine or addresses not ready\n");
+        return;
+    }
+    
+    // Set state to Connecting before starting QUIC
+    mState = TransportState::Connecting;
+    fprintf(stderr, "[QUIC-DEBUG] State set to Connecting\n");
     
     if (!mConfig.isServer) {
         std::lock_guard<std::mutex> lock(mQuicEngineMutex);
@@ -452,11 +462,15 @@ void IceQuicTransport::gatherCandidates() {
 }
 
 bool IceQuicTransport::addRemoteCandidate(const std::string& candidateSdp) {
+    fprintf(stderr, "[ICE-DEBUG] addRemoteCandidate: %s\n", candidateSdp.c_str());
+    
     if (!mIceAgent || mIceStreamId == 0) {
+        fprintf(stderr, "[ICE-DEBUG] addRemoteCandidate: agent not initialized\n");
         return false;
     }
     
     if (candidateSdp.empty()) {
+        fprintf(stderr, "[ICE-DEBUG] addRemoteCandidate: empty candidate\n");
         return false;
     }
     
@@ -467,22 +481,30 @@ bool IceQuicTransport::addRemoteCandidate(const std::string& candidateSdp) {
     );
     
     if (!candidate) {
+        fprintf(stderr, "[ICE-DEBUG] addRemoteCandidate: failed to parse candidate\n");
         return false;
     }
     
+    fprintf(stderr, "[ICE-DEBUG] addRemoteCandidate: parsed successfully, adding to agent\n");
+    
     GSList* candidates = g_slist_append(nullptr, candidate);
     int result = nice_agent_set_remote_candidates(mIceAgent, mIceStreamId, 1, candidates);
+    
+    fprintf(stderr, "[ICE-DEBUG] addRemoteCandidate: set_remote_candidates returned %d\n", result);
     
     g_slist_free_full(candidates, (GDestroyNotify)nice_candidate_free);
     
     if (result > 0 && mState == TransportState::Gathering) {
         mState = TransportState::Connecting;
+        fprintf(stderr, "[ICE-DEBUG] addRemoteCandidate: state changed to Connecting\n");
     }
     
     return result > 0;
 }
 
 void IceQuicTransport::setRemoteCredentials(const std::string& ufrag, const std::string& pwd) {
+    fprintf(stderr, "[ICE-DEBUG] setRemoteCredentials: ufrag=%s, pwd=%s\n", ufrag.c_str(), pwd.c_str());
+    
     if (!mIceAgent || mIceStreamId == 0) {
         throw IceQuicException(IceQuicException::ErrorCode::InvalidState,
                                "ICE agent not initialized");
@@ -490,9 +512,11 @@ void IceQuicTransport::setRemoteCredentials(const std::string& ufrag, const std:
     
     if (!nice_agent_set_remote_credentials(mIceAgent, mIceStreamId, 
                                            ufrag.c_str(), pwd.c_str())) {
+        fprintf(stderr, "[ICE-DEBUG] setRemoteCredentials: FAILED\n");
         throw IceQuicException(IceQuicException::ErrorCode::IceError,
                                "Failed to set remote credentials");
     }
+    fprintf(stderr, "[ICE-DEBUG] setRemoteCredentials: SUCCESS\n");
 }
 
 void IceQuicTransport::setRemoteDescription(const IceDescription& desc) {
@@ -552,10 +576,13 @@ IceDescription IceQuicTransport::getLocalDescription() const {
 }
 
 void IceQuicTransport::endOfRemoteCandidates() {
+    fprintf(stderr, "[ICE-DEBUG] endOfRemoteCandidates called\n");
     if (!mIceAgent || mIceStreamId == 0) {
+        fprintf(stderr, "[ICE-DEBUG] endOfRemoteCandidates: agent not initialized\n");
         return;
     }
     nice_agent_peer_candidate_gathering_done(mIceAgent, mIceStreamId);
+    fprintf(stderr, "[ICE-DEBUG] endOfRemoteCandidates: peer_candidate_gathering_done called\n");
 }
 
 uint64_t IceQuicTransport::openStream() {
@@ -740,15 +767,27 @@ void IceQuicTransport::onIceComponentStateChanged(NiceAgent* agent, guint stream
     auto* transport = static_cast<IceQuicTransport*>(userData);
     if (!transport) return;
     
+    // Debug: print ICE state changes
+    const char* stateNames[] = {
+        "DISCONNECTED", "GATHERING", "CONNECTING", "CONNECTED", 
+        "READY", "FAILED", "LAST"
+    };
+    const char* stateName = (state < 7) ? stateNames[state] : "UNKNOWN";
+    fprintf(stderr, "[ICE-DEBUG] Component state changed: %s (stream=%u, component=%u)\n", 
+            stateName, streamId, componentId);
+    
     switch (state) {
         case NICE_COMPONENT_STATE_CONNECTED:
         case NICE_COMPONENT_STATE_READY: {
+            fprintf(stderr, "[ICE-DEBUG] ICE connected/ready, getting selected pair...\n");
             // ICE connection established - get the selected candidate pair addresses
             NiceCandidate* localCandidate = nullptr;
             NiceCandidate* remoteCandidate = nullptr;
             
             if (nice_agent_get_selected_pair(agent, transport->mIceStreamId, 1,
                                              &localCandidate, &remoteCandidate)) {
+                fprintf(stderr, "[ICE-DEBUG] Got selected pair: local=%p, remote=%p\n", 
+                        (void*)localCandidate, (void*)remoteCandidate);
                 // Extract addresses for QUIC
                 if (localCandidate && remoteCandidate) {
                     char localAddrStr[INET6_ADDRSTRLEN];
@@ -794,16 +833,24 @@ void IceQuicTransport::onIceComponentStateChanged(NiceAgent* agent, guint stream
                     }
                     
                     transport->mAddressesSet = true;
+                    fprintf(stderr, "[ICE-DEBUG] Addresses set: local=%s:%d, peer=%s:%d\n",
+                            localAddrStr, nice_address_get_port(&localCandidate->addr),
+                            peerAddrStr, nice_address_get_port(&remoteCandidate->addr));
                 }
+            } else {
+                fprintf(stderr, "[ICE-DEBUG] Failed to get selected pair!\n");
             }
             
             // Start QUIC connection over the ICE-established path
+            fprintf(stderr, "[ICE-DEBUG] Starting QUIC connection (addressesSet=%d)...\n", 
+                    transport->mAddressesSet);
             transport->startQuicConnection();
             break;
         }
             
         case NICE_COMPONENT_STATE_FAILED:
             // ICE connection failed
+            fprintf(stderr, "[ICE-DEBUG] ICE connectivity check FAILED!\n");
             transport->mState = TransportState::Failed;
             if (transport->mCallbacks.onFailed) {
                 transport->mCallbacks.onFailed("ICE connectivity check failed");

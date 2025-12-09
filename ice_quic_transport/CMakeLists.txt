@@ -201,11 +201,29 @@ if(ICE_QUIC_BUILD_EXAMPLES)
         ${LSQUIC_DIR}/include
         ${BORINGSSL_DIR}/include)
     
+    # Speed Test Server
+    add_executable(speed_test_server examples/speed_test_server.cpp)
+    target_link_libraries(speed_test_server PRIVATE ice_quic_transport z)
+    target_include_directories(speed_test_server PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${LSQUIC_DIR}/include
+        ${BORINGSSL_DIR}/include)
+    
+    # Speed Test Client
+    add_executable(speed_test_client examples/speed_test_client.cpp)
+    target_link_libraries(speed_test_client PRIVATE ice_quic_transport z)
+    target_include_directories(speed_test_client PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${LSQUIC_DIR}/include
+        ${BORINGSSL_DIR}/include)
+    
     message(STATUS "ice_quic_transport examples enabled")
     message(STATUS "  - echo_server")
     message(STATUS "  - echo_client")
     message(STATUS "  - loopback_test")
     message(STATUS "  - automated_echo_test")
+    message(STATUS "  - speed_test_server")
+    message(STATUS "  - speed_test_client")
 endif()
 
 # =============================================================================
