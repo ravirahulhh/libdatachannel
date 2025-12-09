@@ -47,7 +47,7 @@ void PrintStats() {
     LastBytesReceived = 0;
     
     while (Running) {
-        this_thread::sleep_for(milliseconds(500));
+        this_thread::sleep_for(milliseconds(1000));
         
         auto now = steady_clock::now();
         uint64_t currentBytes = SessionBytesReceived;

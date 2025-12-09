@@ -48,7 +48,7 @@ void PrintStats() {
 	auto lastTime = steady_clock::now();
 
 	while (Running && !SendComplete) {
-		this_thread::sleep_for(milliseconds(500));
+		this_thread::sleep_for(milliseconds(1000));
 
 		auto now = steady_clock::now();
 		auto elapsed = duration_cast<milliseconds>(now - StartTime).count();
